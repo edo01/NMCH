@@ -124,7 +124,7 @@ __global__ void exact_simulation(float *d_results_exact, int steps, float dt, fl
     float lambda;
     float d;
     float gamma;
-    int N
+    int N;
     float integral;
 
     // initialization
@@ -134,11 +134,11 @@ __global__ void exact_simulation(float *d_results_exact, int steps, float dt, fl
     for (int i = 0; i < steps; ++i) {
         //step 1
         d = 2 * kappa * theta/(sigma * sigma);
-        for (int i = 0; i < n_steps; i++) {
+        for (int i = 0; i < steps; i++) {
             // Calculate lambda for Poisson distribution
             lambda = (2.0f * kappa * exp(-kappa * dt) * vt) / (sigma * sigma) * (1.0f - exp(-kappa * dt));
-            N = curand_poisson(&state);// Simulate Poisson process
-            gamma = gamma_distribution(N + d, &state);// Simulate Gamma distribution 
+            N = curand_poisson(&localState,lambda);// Simulate Poisson process
+            gamma = gamma_distribution(N + d, &localState);// Simulate Gamma distribution 
             
             vt = sigma * sigma * (1.0f - exp(-kappa * dt)) / (2.0f * kappa) * gamma;
             
@@ -153,12 +153,12 @@ __global__ void exact_simulation(float *d_results_exact, int steps, float dt, fl
             integral = 1.0 / sigma * (v1 - v0 - kappa * theta + kappa * vI);
             m += -0.5f * vI + rho * integral;
             sigma2 = (1.0f - rho * rho) * vI;
-            St = exp(m + sigma2 * curand_normal(&state));
+            St = exp(m + sigma2 * curand_normal(&localState));
         }
 
         // Payoff : (S_T - K)+
         float payoff = fmax(St - 1.0f, 0.0f);  
-        results[idx] = payoff;
+        d_results_exact[idx] = payoff;
     }
 }
 
@@ -214,7 +214,7 @@ int main() {
 	cudaEventCreate(&stop1);				// GPU timer instructions
 	cudaEventRecord(start1, 0);			// GPU timer instructions
 
-    exact_simulation<<<NB, NTPB>>>(d_results_exact, steps, dt, kappa, theta, sigma, rho, state)
+    exact_simulation<<<NB, NTPB>>>(d_results_exact, steps, dt, kappa, theta, sigma, rho, state);
 	cudaEventRecord(stop1, 0);			// GPU timer instructions
 	cudaEventSynchronize(stop1);			// GPU timer instructions
 	cudaEventElapsedTime(&Tim1,			// GPU timer instructions
