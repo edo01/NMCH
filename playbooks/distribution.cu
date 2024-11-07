@@ -112,6 +112,31 @@ __device__ float gamma_distribution(float alpha, curandState* state) {
 }
 
 
+__device__ float gamma_distribution2(float alpha, curandState *state) {
+    if (alpha >= 1.0f) {
+        float d = alpha - 1.0f / 3.0f;
+        float c = 1.0f / sqrt(9.0f * d);
+        while (true) {
+            float x = curand_normal(state);  
+            float v = 1.0f + c * x;
+            v = v * v * v;
+            
+            float u = curand_uniform(state);
+            if (u < 1.0f - 0.0331f * x * x * x * x || log(u) < 0.5f * x * x + d - 2.0f) {
+                return d * v;  
+            }
+        }
+    } else {
+        // alpha < 1 
+        while (true) {
+            float u = curand_uniform(state);
+            float x = curand_exponential(state);
+            if (u <= pow(x, alpha)) {
+                return x;  
+            }
+        }
+    }
+}
 
 __global__ void exact_simulation(float *d_results_exact, int steps, float dt, float kappa, float theta, float sigma, float rho, curandState_t* state) {
 
@@ -138,7 +163,7 @@ __global__ void exact_simulation(float *d_results_exact, int steps, float dt, fl
             // Calculate lambda for Poisson distribution
             lambda = (2.0f * kappa * exp(-kappa * dt) * vt) / (sigma * sigma) * (1.0f - exp(-kappa * dt));
             N = curand_poisson(&localState,lambda);// Simulate Poisson process
-            gamma = gamma_distribution(N + d, &localState);// Simulate Gamma distribution 
+            gamma = gamma_distribution2(N + d, &localState);// Simulate Gamma distribution 
             
             vt = sigma * sigma * (1.0f - exp(-kappa * dt)) / (2.0f * kappa) * gamma;
             
@@ -161,6 +186,14 @@ __global__ void exact_simulation(float *d_results_exact, int steps, float dt, fl
         d_results_exact[idx] = payoff;
     }
 }
+
+
+
+
+
+
+
+
 
 
 
@@ -232,7 +265,7 @@ int main() {
     option_price_exact /= simulations;
     option_price_exact *= expf(-r * T); 
 
-    printf("The estimated price is equal to %f\n", option_price_exact);
+    printf("The exact estimated price is equal to %f\n", option_price_exact);
 
 
 	printf("The true price %f\n", S0 * NP((r + 0.5 * sigma * sigma)/sigma) -
