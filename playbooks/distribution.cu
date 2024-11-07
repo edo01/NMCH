@@ -89,199 +89,122 @@ __global__ void hestonMonteCarlo(float *d_results, int steps, float dt, float ka
 
 //Gamma_distribution
 __device__ float gamma_distribution(float alpha, curandState* state) {
-    float d, U, v, x, c;
-
-    d = alpha - 1.0 /3.0; 
-    c = 1.0 / sqrtf(9*d);
-    
-    while(alpha>=1){
-        x = curand_normal(state); //Normal variate;
-        U = curand_uniform(state); // Uniform variate
-        v = pow((1 + x * c),3); 
-        while(v<=0){
-            v = pow((1 + x * c),3); 
-        }
-        // log(U) < 0.5 * x^2 + d - 2
-        if (logf(U) < 0.5 * x * x + d - 2) {
-            return d*v;
-        }
-        if( U < 1.0 - 0.0331 * (x*x)*(x*x)){
-            return (d*v);
-        } 
-    }
-}
-
-
-__device__ float gamma_distribution2(float alpha, curandState *state) {
     if (alpha >= 1.0f) {
         float d = alpha - 1.0f / 3.0f;
-        float c = 1.0f / sqrt(9.0f * d);
+        float c = 1.0f / sqrtf(9.0f * d);
+        float x, v, u;
+
         while (true) {
-            float x = curand_normal(state);  
-            float v = 1.0f + c * x;
+            x = curand_normal(state);
+            v = 1.0f + c * x;
             v = v * v * v;
-            
-            float u = curand_uniform(state);
-            if (u < 1.0f - 0.0331f * x * x * x * x || log(u) < 0.5f * x * x + d - 2.0f) {
-                return d * v;  
-            }
+            if (v <= 0.0f) continue;
+            u = curand_uniform(state);
+            if (u < 1.0f - 0.0331f * (x * x) * (x * x)) return d * v;
+            if (logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) return d * v;
         }
     } else {
-        // alpha < 1 
-        while (true) {
-            float u = curand_uniform(state);
-            float x = curand_exponential(state);
-            if (u <= pow(x, alpha)) {
-                return x;  
-            }
-        }
+        float u = curand_uniform(state);
+        return gamma_distribution2(alpha + 1.0f, state) * powf(u, 1.0f / alpha);
     }
 }
 
-__global__ void exact_simulation(float *d_results_exact, int steps, float dt, float kappa, float theta, float sigma, float rho, curandState_t* state) {
+__global__ void exact_heston(float* d_results_exact, int steps, float dt, curandState_t* state) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    curandState localState = state[tid];
 
-    float St = S0;  
-    float vt = v0;  
-    float vI = 0.0f;  
+    float St = S0;
+    float vt = v0;
+    float vI = 0.0f;
     float v1 = 0.0f;
-    float m = 0.0f;   
-    float sigma2 = 0.0f;
-    float lambda;
-    float d;
-    float gamma;
-    int N;
-    float integral;
-
-    // initialization
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    curandState localState = state[idx];
 
     for (int i = 0; i < steps; ++i) {
-        //step 1
-        d = 2 * kappa * theta/(sigma * sigma);
-        for (int i = 0; i < steps; i++) {
-            // Calculate lambda for Poisson distribution
-            lambda = (2.0f * kappa * exp(-kappa * dt) * vt) / (sigma * sigma) * (1.0f - exp(-kappa * dt));
-            N = curand_poisson(&localState,lambda);// Simulate Poisson process
-            gamma = gamma_distribution2(N + d, &localState);// Simulate Gamma distribution 
-            
-            vt = sigma * sigma * (1.0f - exp(-kappa * dt)) / (2.0f * kappa) * gamma;
-            
-            if(i == 1){
-                v1 = vt;
-            }
+        float d = 2.0f * kappa * theta / (sigma * sigma);
+        float lambda = (2 * kappa * expf(-kappa * dt) * vt) / (sigma * sigma * (1 - expf(-kappa * dt)));
+        int N = curand_poisson(&localState, lambda);
+        float gamma_sample = gamma_distribution(d + N, &localState);
+        
+        float vt_next = (sigma * sigma * (1.0f - expf(-kappa * dt)) / (2.0f * kappa)) * gamma_sample;
 
-            //step 2
-            vI += 0.5f * (vt + vI);
-            
-            //step 3
-            integral = 1.0 / sigma * (v1 - v0 - kappa * theta + kappa * vI);
-            m += -0.5f * vI + rho * integral;
-            sigma2 = (1.0f - rho * rho) * vI;
-            St = exp(m + sigma2 * curand_normal(&localState));
-        }
+        vI += 0.5f * (vt + vt_next);
 
-        // Payoff : (S_T - K)+
-        float payoff = fmax(St - 1.0f, 0.0f);  
-        d_results_exact[idx] = payoff;
+        vt = vt_next;
+
+        if (i == 1) v1 = vt;  
+        
     }
+
+    float integral_W = (1.0f / sigma) * (v1 - v0 - kappa * theta + kappa * vI);
+    float m = -0.5f * vI + rho * integral_W;
+    float sigma2 = (1.0f - rho * rho) * vI;
+    float exponent = m + sqrtf(sigma2) * curand_normal(&localState);
+    St = expf(exponent);
+    d_results_exact[tid] = fmaxf(St - K, 0.0f);
 }
 
-
-
-
-
-
-
-
-
-
-
 int main() {
-    
     int NTPB = 256;
     int NB = (simulations + NTPB - 1) / NTPB;
-    
-    //Allocate memory on the device to store the results
-    float *d_results;
-    float *d_results_exact;
+
+    float *d_results, *d_results_exact;
     cudaMalloc((void **)&d_results, simulations * sizeof(float));
     cudaMalloc((void **)&d_results_exact, simulations * sizeof(float));
 
     curandState_t* state;
-	// cudaMalloc the array state
-	cudaMalloc(&state, simulations * sizeof(curandState_t)); // is the total number of state
+    cudaMalloc(&state, simulations * sizeof(curandState_t));
+    init_curand_state<<<NB, NTPB>>>(state, time(NULL));
 
-    init_curand_state<<<NB, NTPB>>>(state);
+    cudaEvent_t start, stop;
+    float elapsedTime;
 
-	float Tim;
-	cudaEvent_t start, stop;			// GPU timer instructions
-	cudaEventCreate(&start);			// GPU timer instructions
-	cudaEventCreate(&stop);				// GPU timer instructions
-	cudaEventRecord(start, 0);			// GPU timer instructions
+    // Euler Discretization
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start, 0);
 
-    hestonMonteCarlo<<<NB, NTPB>>>(d_results, steps, dt, kappa, theta, sigma, rho, state);
+    euler_heston<<<NB, NTPB>>>(d_results, steps, dt, state);
 
-	cudaEventRecord(stop, 0);			// GPU timer instructions
-	cudaEventSynchronize(stop);			// GPU timer instructions
-	cudaEventElapsedTime(&Tim,			// GPU timer instructions
-		start, stop);					// GPU timer instructions
-	cudaEventDestroy(start);			// GPU timer instructions
-	cudaEventDestroy(stop);				// GPU timer instructions
+    cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    printf("Euler simulation time: %f ms\n", elapsedTime);
 
+    // Exact Simulation
+    cudaEventRecord(start, 0);
+
+    exact_heston<<<NB, NTPB>>>(d_results_exact, steps, dt, state);
+
+    cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    printf("Exact simulation time: %f ms\n", elapsedTime);
+
+    // Calculate option price for both methods
     float *h_results = (float *)malloc(simulations * sizeof(float));
-    cudaMemcpy(h_results, d_results, simulations * sizeof(float), cudaMemcpyDeviceToHost);
-
-    float option_price = 0.0f;
-    for (int i = 0; i < simulations; ++i) {
-        option_price += h_results[i];
-    }
-    option_price /= simulations;
-    option_price *= expf(-r * T); 
-
-    printf("The estimated price is equal to %f\n", option_price);
-
-    float Tim1;
-	cudaEvent_t start1, stop1;			// GPU timer instructions
-	cudaEventCreate(&start1);			// GPU timer instructions
-	cudaEventCreate(&stop1);				// GPU timer instructions
-	cudaEventRecord(start1, 0);			// GPU timer instructions
-
-    exact_simulation<<<NB, NTPB>>>(d_results_exact, steps, dt, kappa, theta, sigma, rho, state);
-	cudaEventRecord(stop1, 0);			// GPU timer instructions
-	cudaEventSynchronize(stop1);			// GPU timer instructions
-	cudaEventElapsedTime(&Tim1,			// GPU timer instructions
-		start1, stop1);					// GPU timer instructions
-	cudaEventDestroy(start1);			// GPU timer instructions
-	cudaEventDestroy(stop1);				// GPU timer instructions
-
     float *h_results_exact = (float *)malloc(simulations * sizeof(float));
+    cudaMemcpy(h_results, d_results, simulations * sizeof(float), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_results_exact, d_results_exact, simulations * sizeof(float), cudaMemcpyDeviceToHost);
 
+    float option_price_euler = 0.0f;
     float option_price_exact = 0.0f;
     for (int i = 0; i < simulations; ++i) {
+        option_price_euler += h_results[i];
         option_price_exact += h_results_exact[i];
     }
+
+    option_price_euler /= simulations;
     option_price_exact /= simulations;
-    option_price_exact *= expf(-r * T); 
+    option_price_euler *= expf(-r);
+    option_price_exact *= expf(-r);
 
-    printf("The exact estimated price is equal to %f\n", option_price_exact);
+    printf("Euler estimated price: %f\n", option_price_euler);
+    printf("Exact estimated price: %f\n", option_price_exact);
 
-
-	printf("The true price %f\n", S0 * NP((r + 0.5 * sigma * sigma)/sigma) -
-									K * expf(-r) * NP((r - 0.5 * sigma * sigma) / sigma));
-
-	printf("Execution time %f ms for heston\n", Tim);
-    printf("Execution time %f ms for exact\n", Tim1);
     free(h_results);
-    cudaFree(d_results);
     free(h_results_exact);
+    cudaFree(d_results);
     cudaFree(d_results_exact);
+    cudaFree(state);
 
     return 0;
 }
-
-
-
-
-
