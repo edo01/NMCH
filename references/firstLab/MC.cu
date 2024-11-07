@@ -6,7 +6,14 @@ the name of the author above.
 ***************************************************************/
 
 #include <stdio.h>
+/**
+ * We use the curand library on the **device**: we want to generate random numbers on the device
+ * on the fly. Using the host library "curand.h", we are obliged to store the random numbers on the
+ * global memory of the device, which is not efficient for our purpose( we want to generate the random
+ * number and use it directly in the kernel).
+ */
 #include <curand_kernel.h>
+
 
 
 // Function that catches the error 
@@ -218,7 +225,7 @@ int main(void) {
 	printf("Execution time %f ms\n", Tim);
 
 	// Free the memory
-	cudaFree(payGPU);
+	//cudaFree(payGPU);
 
 	return 0;
 }

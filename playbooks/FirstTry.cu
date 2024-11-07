@@ -1,3 +1,11 @@
+/**
+ * degrees of freedom:
+ * - random number generator
+ * - memory allocation
+ * - shared memory optimization
+ * - number of threads per block and number of blocks
+ */
+
 #include <curand_kernel.h>
 #include <cmath>
 #include <iostream>
@@ -51,17 +59,16 @@ double NP(double x) {
 	}
 }
 
-// Set the state for each thread
+// Initialize the random number generator
 __global__ void init_curand_state(curandState_t* state)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
-	/* Each thread gets same seed, a different sequence
-	   number, no offset */
 	curand_init(0, idx, 0, &state[idx]);
 }
 
 __global__ void hestonMonteCarlo(float *d_results, int steps, float dt, float kappa, float theta, float sigma, float rho, curandState_t* state) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    
+	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     //Initialize the random number generator
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -85,7 +92,6 @@ __global__ void hestonMonteCarlo(float *d_results, int steps, float dt, float ka
     // E[f(ST )] = E[(S1 − 1)+].
     d_results[tid] = fmaxf(St - K, 0.0f);
 }
-
 
 int main() {
     
