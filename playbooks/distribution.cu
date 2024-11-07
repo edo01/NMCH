@@ -39,6 +39,7 @@ __global__ void exact_simulation(int num_simulations, float* results, float r, f
     float lambda;
     float d;
     float gamma;
+    int N
     float integral;
 
     // initialization
@@ -46,28 +47,27 @@ __global__ void exact_simulation(int num_simulations, float* results, float r, f
     curandState localState = state[idx];
 
     for (int i = 0; i < num_simulations; ++i) {
-        
+        //step 1
         d = 2 * kappa * theta/(sigma * sigma);
-         // Calculate lambda for Poisson distribution
         for (int i = 0; i < n_steps; i++) {
+            // Calculate lambda for Poisson distribution
             lambda = (2.0f * kappa * exp(-kappa * dt) * vt) / (sigma * sigma) * (1.0f - exp(-kappa * dt));
-            
-            // Simulate Poisson process
-            int N = curand_poisson(state);
-
-            // Simulate Gamma distribution 
-            gamma = gamma_distribution(N + d, &state);
+            N = curand_poisson(&state);// Simulate Poisson process
+            gamma = gamma_distribution(N + d, &state);// Simulate Gamma distribution 
             
             vt = sigma * sigma * (1.0f - exp(-kappa * dt)) / (2.0f * kappa) * gamma;
-            if(i==1){
+            
+            if(i == 1){
                 v1 = vt;
             }
+
+            //step 2
             vI += 0.5f * (vt + vI);
             
+            //step 3
             integral = 1.0 / sigma * (v1 - v0 - kappa * theta + kappa * vI);
             m += -0.5f * vI + rho * integral;
             sigma2 = (1.0f - rho * rho) * vI;
-
             St = exp(m + sigma2 * curand_normal(&state));
         }
 
