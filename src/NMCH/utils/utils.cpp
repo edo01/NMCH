@@ -22,5 +22,16 @@ namespace nmch::utils{
             return (one_over_twopi * exp(-x * x / 2.0) * t * (t * (t * (t *
                 (t * b5 + b4) + b3) + b2) + b1));
         }
-    }
+    };
+}
+
+namespace nmch::utils::cuda{
+ 
+    void checkCUDA(cudaError_t error, const char* file, int line) {
+        if (error != cudaSuccess) {
+            printf("There is an error in file %s at line %d\n", file, line);
+            exit(EXIT_FAILURE);
+        }
+    };
+
 }

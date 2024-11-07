@@ -1,4 +1,4 @@
-#ifdef RANDOM_CUH
+#ifndef RANDOM_CUH
 #define RANDOM_CUH
 
 #include <curand_kernel.h>

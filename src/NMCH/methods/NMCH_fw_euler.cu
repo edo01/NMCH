@@ -2,12 +2,13 @@
 
 namespace nmch::methods::kernels{
 
+    template <typename rnd_state>
     __global__ void MC_k2(float S_0, float r, float sigma, float dt, float K,
-                            int N, curandState_t* state, float* sum, int n)
+                            int N, rnd_state* state, float* sum, int n)
     {
 
         int idx = blockDim.x * blockIdx.x + threadIdx.x;
-        curandState localState = state[idx]; // in this way we avoid two different series  to be the same
+        rnd_state localState = state[idx]; // in this way we avoid two different series  to be the same
         float2 G;
         float S = S_0;
         extern __shared__ float A[]; // dynamically allocated in the kernel call
@@ -52,11 +53,12 @@ namespace nmch::methods::kernels{
 
 } // namespace nmch::methods::kernels
 
+
 namespace nmch::methods
 {
     template <typename rnd_state>
     NMCH_fw_euler<rnd_state>::NMCH_fw_euler(int NTPB, int NB, float T, float S_0, float K, float sigma, float r, int N):
-    NMCH(NTPB, NB, T, S_0, K, sigma, r, N)
+    NMCH<rnd_state>(NTPB, NB, T, S_0, K, sigma, r, N)
     {};
 
     template <typename rnd_state>
@@ -64,16 +66,17 @@ namespace nmch::methods
     NMCH_fw_euler<rnd_state>::compute()
     {
         // always called before the initial call to the kernel
-        allocate_memory();
-        init_curand_state();
+        this->allocate_memory();
+        this->init_curand_state();
 
+        float Tim;
         cudaEvent_t start, stop;			// GPU timer instructions
         cudaEventCreate(&start);			// GPU timer instructions
         cudaEventCreate(&stop);				// GPU timer instructions
         cudaEventRecord(start, 0);			// GPU timer instructions
 
-	    kernels::mk_2 < << this->NB, this->NTPB, 2*this->NTPB*sizeof(float)>> > ( this->S_0, this->r, 
-                this->sigma, this->dt, this->K, this->N, this->state, this->sum, this->NB*this->NTPB);
+        kernels::MC_k2<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->r, 
+                this->sigma, this->dt, this->K, this->N, this->states, this->sum, this->NB * this->NTPB);
         
         //cudaDeviceSynchronize(); we are using the memcopy after.
 
@@ -85,16 +88,16 @@ namespace nmch::methods
         cudaEventDestroy(stop);				// GPU timer instructions
 
         cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
-        free_memory();
-
+        this->free_memory();
+        
         return this->result;
     };
 
 
     // definition of the base class to avoid compilation errors
-    NMCH_fw_euler<curandStateXORWOW_t> nmch1;
-    NMCH_fw_euler<curandStateMRG32k3a_t> nmch2;
-    NMCH_fw_euler<curandStatePhilox4_32_10_t> nmch3;
-    NMCH_fw_euler<curandStateMtgp32_t> nmch4;
+    template class NMCH_fw_euler<curandStateXORWOW_t>;
+    template class NMCH_fw_euler<curandStateMRG32k3a_t>;
+    template class NMCH_fw_euler<curandStatePhilox4_32_10_t>;
+    //template class NMCH_fw_euler<curandStateMtgp32_t>;
 
 } // namespace nmch::methods
