@@ -26,7 +26,7 @@ __device__ float gamma_distribution(float alpha, curandState* state) {
 
 
 
-__global__ void exact_simulation_kernel(int num_simulations, float* results, float r, float kappa, float theta, float sigma,
+__global__ void exact_simulation(int num_simulations, float* results, float r, float kappa, float theta, float sigma,
                                         float S0, float v0, float T, int n_steps) {
 
     float St = S0;  
