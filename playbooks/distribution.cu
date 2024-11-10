@@ -104,12 +104,13 @@ __device__ float gamma_distribution(float alpha, curandState* state) {
             if (logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) return d * v;
         }
     } else {
+        //A random variable X ~ G(alpha + 1, beta), then: Y = X * U^{1/alpha}, then Y ~G(alpha, beta).
         float u = curand_uniform(state);
-        return gamma_distribution2(alpha + 1.0f, state) * powf(u, 1.0f / alpha);
+        return gamma_distribution(alpha + 1.0f, state) * powf(u, 1.0f / alpha);
     }
 }
 
-__global__ void exact_heston(float* d_results_exact, int steps, float dt, curandState_t* state) {
+__global__ void exact_simulation(float *d_results_exact, int steps, float dt, float kappa, float theta, float sigma, float rho, curandState_t* state) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     curandState localState = state[tid];
 
@@ -122,11 +123,11 @@ __global__ void exact_heston(float* d_results_exact, int steps, float dt, curand
         float d = 2.0f * kappa * theta / (sigma * sigma);
         float lambda = (2 * kappa * expf(-kappa * dt) * vt) / (sigma * sigma * (1 - expf(-kappa * dt)));
         int N = curand_poisson(&localState, lambda);
-        float gamma_sample = gamma_distribution(d + N, &localState);
+        float gamma = gamma_distribution(d + N, &localState);
         
-        float vt_next = (sigma * sigma * (1.0f - expf(-kappa * dt)) / (2.0f * kappa)) * gamma_sample;
+        float vt_next = (sigma * sigma * (1.0f - expf(-kappa * dt)) / (2.0f * kappa)) * gamma;
 
-        vI += 0.5f * (vt + vt_next);
+        vI += 0.5f * (vt + vt_next) * dt;
 
         vt = vt_next;
 
@@ -142,69 +143,94 @@ __global__ void exact_heston(float* d_results_exact, int steps, float dt, curand
     d_results_exact[tid] = fmaxf(St - K, 0.0f);
 }
 
+
+
 int main() {
+    
     int NTPB = 256;
     int NB = (simulations + NTPB - 1) / NTPB;
-
-    float *d_results, *d_results_exact;
+    
+    //Allocate memory on the device to store the results
+    float *d_results;
+    float *d_results_exact;
     cudaMalloc((void **)&d_results, simulations * sizeof(float));
     cudaMalloc((void **)&d_results_exact, simulations * sizeof(float));
 
     curandState_t* state;
-    cudaMalloc(&state, simulations * sizeof(curandState_t));
-    init_curand_state<<<NB, NTPB>>>(state, time(NULL));
+	// cudaMalloc the array state
+	cudaMalloc(&state, simulations * sizeof(curandState_t)); // is the total number of state
 
-    cudaEvent_t start, stop;
-    float elapsedTime;
+    init_curand_state<<<NB, NTPB>>>(state);
 
-    // Euler Discretization
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start, 0);
+	float Tim;
+	cudaEvent_t start, stop;			// GPU timer instructions
+	cudaEventCreate(&start);			// GPU timer instructions
+	cudaEventCreate(&stop);				// GPU timer instructions
+	cudaEventRecord(start, 0);			// GPU timer instructions
 
-    euler_heston<<<NB, NTPB>>>(d_results, steps, dt, state);
+    hestonMonteCarlo<<<NB, NTPB>>>(d_results, steps, dt, kappa, theta, sigma, rho, state);
 
-    cudaEventRecord(stop, 0);
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&elapsedTime, start, stop);
-    printf("Euler simulation time: %f ms\n", elapsedTime);
+	cudaEventRecord(stop, 0);			// GPU timer instructions
+	cudaEventSynchronize(stop);			// GPU timer instructions
+	cudaEventElapsedTime(&Tim,			// GPU timer instructions
+		start, stop);					// GPU timer instructions
+	cudaEventDestroy(start);			// GPU timer instructions
+	cudaEventDestroy(stop);				// GPU timer instructions
 
-    // Exact Simulation
-    cudaEventRecord(start, 0);
-
-    exact_heston<<<NB, NTPB>>>(d_results_exact, steps, dt, state);
-
-    cudaEventRecord(stop, 0);
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&elapsedTime, start, stop);
-    printf("Exact simulation time: %f ms\n", elapsedTime);
-
-    // Calculate option price for both methods
     float *h_results = (float *)malloc(simulations * sizeof(float));
-    float *h_results_exact = (float *)malloc(simulations * sizeof(float));
     cudaMemcpy(h_results, d_results, simulations * sizeof(float), cudaMemcpyDeviceToHost);
+
+    float option_price = 0.0f;
+    for (int i = 0; i < simulations; ++i) {
+        option_price += h_results[i];
+    }
+    option_price /= simulations;
+    option_price *= expf(-r * T); 
+
+    printf("The estimated price is equal to %f\n", option_price);
+
+    float Tim1;
+	cudaEvent_t start1, stop1;			// GPU timer instructions
+	cudaEventCreate(&start1);			// GPU timer instructions
+	cudaEventCreate(&stop1);				// GPU timer instructions
+	cudaEventRecord(start1, 0);			// GPU timer instructions
+
+    exact_simulation<<<NB, NTPB>>>(d_results_exact, steps, dt, kappa, theta, sigma, rho, state);
+	
+    cudaEventRecord(stop1, 0);			// GPU timer instructions
+	cudaEventSynchronize(stop1);			// GPU timer instructions
+	cudaEventElapsedTime(&Tim1,			// GPU timer instructions
+		start1, stop1);					// GPU timer instructions
+	cudaEventDestroy(start1);			// GPU timer instructions
+	cudaEventDestroy(stop1);				// GPU timer instructions
+
+    float *h_results_exact = (float *)malloc(simulations * sizeof(float));
     cudaMemcpy(h_results_exact, d_results_exact, simulations * sizeof(float), cudaMemcpyDeviceToHost);
 
-    float option_price_euler = 0.0f;
     float option_price_exact = 0.0f;
     for (int i = 0; i < simulations; ++i) {
-        option_price_euler += h_results[i];
         option_price_exact += h_results_exact[i];
     }
-
-    option_price_euler /= simulations;
     option_price_exact /= simulations;
-    option_price_euler *= expf(-r);
-    option_price_exact *= expf(-r);
+    option_price_exact *= expf(-r * T); 
 
-    printf("Euler estimated price: %f\n", option_price_euler);
-    printf("Exact estimated price: %f\n", option_price_exact);
+    printf("The estimated price is equal to %f\n", option_price_exact);
 
+
+	printf("The true price %f\n", S0 * NP((r + 0.5 * sigma * sigma)/sigma) -
+									K * expf(-r) * NP((r - 0.5 * sigma * sigma) / sigma));
+
+	printf("Execution time %f ms for heston\n", Tim);
+    printf("Execution time %f ms for exact\n", Tim1);
     free(h_results);
-    free(h_results_exact);
     cudaFree(d_results);
+    free(h_results_exact);
     cudaFree(d_results_exact);
-    cudaFree(state);
 
     return 0;
 }
+
+
+
+
+
