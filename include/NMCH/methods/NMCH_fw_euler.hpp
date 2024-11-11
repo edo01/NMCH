@@ -16,11 +16,12 @@ namespace nmch::methods::cudakernels
 namespace nmch::methods
 {
     template <typename rnd_state>
-    class NMCH_fw_euler : protected NMCH<rnd_state>
+    class NMCH_fw_euler : public NMCH<rnd_state>
     {   
         public:
             NMCH_fw_euler(int NTPB, int NB, float T, float S_0, float K, float sigma, float r, int N);
             virtual int compute() override;
+            virtual ~NMCH_fw_euler() = default;
     };
 
 } // nmch::methods

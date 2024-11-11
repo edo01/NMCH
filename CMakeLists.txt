@@ -41,8 +41,8 @@ set(SOURCES
     ${src_dir}/NMCH/methods/NMCH_fw_euler.cu
     ${src_dir}/NMCH/random/random.cu
 #    ${src_dir}/NMCH/utils/cu_utils.cu
-    ${src_dir}/NMCH/utils/utils.cpp
-    ${src_dir}/NMCH/test/test.cpp
+    ${src_dir}/NMCH/utils/utils.cu
+    ${src_dir}/NMCH/test/test.cu
 )
 
 # Add executable
