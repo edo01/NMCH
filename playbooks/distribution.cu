@@ -198,7 +198,7 @@ int main() {
     exact_simulation<<<NB, NTPB>>>(d_results_exact, steps, dt, kappa, theta, sigma, rho, state);
 	
     cudaEventRecord(stop1, 0);			// GPU timer instructions
-	cudaEventSynchronize(stop1);			// GPU timer instructions
+	cudaEventSynchronize(stop1);		// GPU timer instructions
 	cudaEventElapsedTime(&Tim1,			// GPU timer instructions
 		start1, stop1);					// GPU timer instructions
 	cudaEventDestroy(start1);			// GPU timer instructions
