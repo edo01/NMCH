@@ -3,8 +3,8 @@
 namespace nmch::methods {
 
     template <typename rnd_state>
-    NMCH<rnd_state>::NMCH(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float theta, float sigma, int N)
-    : NTPB(NTPB), NB(NB), T(T), S_0(S_0), K(S_0), v_0(v_0), r(r), k(k), theta(theta), sigma(sigma), N(N)
+    NMCH<rnd_state>::NMCH(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N)
+    : NTPB(NTPB), NB(NB), T(T), S_0(S_0), K(S_0), v_0(v_0), r(r), k(k), rho(rho), theta(theta), sigma(sigma), N(N)
     {
         dt  = T/N;
     };

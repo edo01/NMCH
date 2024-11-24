@@ -1,4 +1,4 @@
-#include "NMCH/methods/NMCH_fw_euler.hpp"
+#include "NMCH/methods/NMCH_FE.hpp"
 //#include <curand_kernel.h>
 
 using namespace nmch::methods;
@@ -14,12 +14,13 @@ int main(int argc, char **argv)
 	//float K = S_0;
 	float r = 0.0f;
 	float k = 0.5f;
+	float rho = -0.7; //tho check
 	float theta = 0.1f;
 	float sigma = 0.3f;
 	int N = 1000;
 
-	// (int NTPB, int NB, float T, float S_0, float r, float k, float theta, float sigma, int N)
-    NMCH_fw_euler<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, theta, sigma, N);
+	// cuda timing
+    NMCH_FE_K2_PiM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
     nmch.init();
 	nmch.compute();
 	nmch.print_stats();

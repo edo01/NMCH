@@ -33,5 +33,4 @@ namespace nmch::utils::cuda{
             exit(EXIT_FAILURE);
         }
     };
-
 }

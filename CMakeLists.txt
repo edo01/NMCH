@@ -31,16 +31,14 @@ add_definitions(-DUSE_CUDA)
 # Set policy to use CUDA_ARCHITECTURES
 cmake_policy(SET CMP0104 NEW)
 
-# Set CUDA_ARCHITECTURES to compute capability 6.1
 set(CMAKE_CUDA_ARCHITECTURES 61 62 70 72 75 80 86)
 
 
 # Source files
 set(SOURCES
     ${src_dir}/NMCH/methods/NMCH.cu
-    ${src_dir}/NMCH/methods/NMCH_fw_euler.cu
+    ${src_dir}/NMCH/methods/NMCH_FE.cu
     ${src_dir}/NMCH/random/random.cu
-#    ${src_dir}/NMCH/utils/cu_utils.cu
     ${src_dir}/NMCH/utils/utils.cu
     ${src_dir}/NMCH/test/test.cu
 )

@@ -75,7 +75,7 @@ namespace nmch::methods
             * @param sigma volatility of the volatility
             * @param N Number of time steps            
             */
-            NMCH(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float theta, float sigma, int N);
+            NMCH(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
 
             /**
              * Compute the price of the option and the volatility at time T
@@ -125,6 +125,8 @@ namespace nmch::methods
             float r;
             /* mean reversion rate of the volatility */
             float k;
+            /* correlation */
+            float rho;
             /* long-term volatility */
             float theta;
             /* volatility of the volatility */
