@@ -38,6 +38,7 @@ set(CMAKE_CUDA_ARCHITECTURES 61 62 70 72 75 80 86)
 set(SOURCES
     ${src_dir}/NMCH/methods/NMCH.cu
     ${src_dir}/NMCH/methods/NMCH_FE.cu
+    ${src_dir}/NMCH/methods/NMCH_EM.cu
     ${src_dir}/NMCH/random/random.cu
     ${src_dir}/NMCH/utils/utils.cu
     ${src_dir}/NMCH/test/test.cu

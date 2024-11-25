@@ -1,4 +1,5 @@
 #include "NMCH/methods/NMCH_FE.hpp"
+#include "NMCH/methods/NMCH_EM.hpp"
 //#include <curand_kernel.h>
 
 using namespace nmch::methods;
@@ -20,7 +21,7 @@ int main(int argc, char **argv)
 	int N = 1000;
 
 	// cuda timing
-    NMCH_FE_K2_PiM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+    NMCH_EM_K1_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
     nmch.init();
 	nmch.compute();
 	nmch.print_stats();

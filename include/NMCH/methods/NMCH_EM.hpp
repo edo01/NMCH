@@ -9,14 +9,14 @@ namespace nmch::methods::cudakernels
 {
     // we now need n, 
     template <typename rnd_state>
-    __global__ void FE_k1(float S_0, float r, float sigma, float dt, float K,
+    __global__ void EM_k1(float S_0, float r, float sigma, float dt, float K,
 						int N, rnd_state* state, float* sum, int n);
 }  // nmch::methods::cudakernels
 
 namespace nmch::methods
 {
     template <typename rnd_state>
-    class NMCH_FE_K1 : public NMCH<rnd_state>
+    class NMCH_EM_K1 : public NMCH<rnd_state>
     {   
         public:
             /**
@@ -30,10 +30,10 @@ namespace nmch::methods
             * @param sigma volatility of the volatility
             * @param N Number of time steps            
             */
-            NMCH_FE_K1(int NTPB, int NB, float T, float S_0, float v_0, float r, float k,float rho, float theta, float sigma, int N);
+            NMCH_EM_K1(int NTPB, int NB, float T, float S_0, float v_0, float r, float k,float rho, float theta, float sigma, int N);
             virtual void finalize() override;
             virtual void print_stats() override;
-            virtual ~NMCH_FE_K1() = default;
+            virtual ~NMCH_EM_K1() = default;
         
         protected:
             /* array for performing the reduction */
@@ -52,34 +52,34 @@ namespace nmch::methods
     };
 
     template <typename rnd_state>
-    class NMCH_FE_K1_MM : public NMCH_FE_K1<rnd_state> {
+    class NMCH_EM_K1_MM : public NMCH_EM_K1<rnd_state> {
         public:
-            NMCH_FE_K1_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            NMCH_EM_K1_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
             virtual void compute() override;
             virtual void init() override;
-            virtual ~NMCH_FE_K1_MM() = default;
+            virtual ~NMCH_EM_K1_MM() = default;
     };
 
-    template <typename rnd_state>
-    class NMCH_FE_K1_PgM : public NMCH_FE_K1<rnd_state> {
+   /*  template <typename rnd_state>
+    class NMCH_FE_K2_PgM : public NMCH_FE_K2<rnd_state> {
         public:
-            NMCH_FE_K1_PgM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            NMCH_FE_K2_PgM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
             virtual void compute() override;
             virtual void init() override;
-            virtual ~NMCH_FE_K1_PgM() = default;
+            virtual ~NMCH_FE_K2_PgM() = default;
     };
     
     template <typename rnd_state>
-    class NMCH_FE_K1_PiM : public NMCH_FE_K1<rnd_state> {
+    class NMCH_FE_K2_PiM : public NMCH_FE_K2<rnd_state> {
         public:
-            NMCH_FE_K1_PiM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            NMCH_FE_K2_PiM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
             virtual void compute() override;
             virtual void init() override;
             virtual void finalize() override;
-            virtual ~NMCH_FE_K1_PiM() = default;
+            virtual ~NMCH_FE_K2_PiM() = default;
         private:
             float *result;
-    };
+    }; */
 
 } // nmch::methods
 

@@ -1,38 +1,104 @@
-#include "NMCH/methods/NMCH_FE.hpp"
+#include "NMCH/methods/NMCH_EM.hpp"
 
 #define testCUDA(error) (nmch::utils::cuda::checkCUDA(error, __FILE__ , __LINE__))
 
 
 namespace nmch::methods::kernels{
+    
+    template <typename rnd_state>
+    __device__
+    float gamma_distribution(float alpha, rnd_state* state) 
+    {
+        float d, c, x, v, u;
+        
+        // big divercence in this case
+
+        if (alpha >= 1.0f) {
+            d = alpha - 1.0f / 3.0f;
+            c = 1.0f / sqrtf(9.0f * d);
+
+            while (true) {
+                x = curand_normal(state);
+                v = 1.0f + c * x;
+                v = v * v * v;
+                if (v <= 0.0f) continue;
+                u = curand_uniform(state);
+                if (u < 1.0f - 0.0331f * (x * x) * (x * x)) return d * v;
+                if (logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) return d * v;
+            }
+        } else { // case alpha < 1
+            // we are using the fact gamma_alpha = gamma_{alpha + 1} * U^{1/alpha}
+            // 
+            //A random variable X ~ G(alpha + 1, beta), then: Y = X * U^{1/alpha}, then Y ~G(alpha, beta).
+            u = curand_uniform(state);
+            alpha += 1.0f; // alpha + 1
+
+            d = alpha - 1.0f / 3.0f;
+            c = 1.0f / sqrtf(9.0f * d);
+
+            while (true) {
+                x = curand_normal(state);
+                v = 1.0f + c * x;
+                v = v * v * v;
+                if (v <= 0.0f) continue;
+                u = curand_uniform(state);
+                if (u < 1.0f - 0.0331f * (x * x) * (x * x)) return d * v * powf(u, 1.0f / alpha);
+                if (logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) return d * v * powf(u, 1.0f / alpha);
+            }
+        }
+    }
 
     template <typename rnd_state>
-    __global__ void FE_k1(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
+    __global__ 
+    /* void EM_K1(float *d_results_exact, int steps, float dt, float kappa, 
+            float theta, float sigma, float rho, rnd_state* state)  */
+    void EM_k1(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
                             float K, int N, rnd_state* state, float* sum, int n)
     {
-
-        int idx = blockDim.x * blockIdx.x + threadIdx.x;
-        rnd_state localState = state[idx]; // in this way we avoid two different series to be the same
-        float2 G1, G2;
-        float S = S_0;
-        float V = v_0;
+        int tid = blockIdx.x * blockDim.x + threadIdx.x;
         extern __shared__ float A[]; // dynamically allocated in the kernel call
+        rnd_state localState = state[tid];
+
+        int i;
+
+        int N_p; // poisson 
+
+        // initialization of the volatility and the price
+        float St = S_0;
+        float vt = v_0;
+
+        float vI = 0.0f;
+
+        float lambda, gamma, vt_next;
+
+        const float d = 2.0f * k * theta / (sigma * sigma);
+
         float *R1s, * R2s; 
         R1s = A;
         R2s = R1s + blockDim.x;
-        int i;
 
-        for(i = 0; i<N; i++)
-        {
-            G1 = curand_normal2(&localState);
-            G2 = curand_normal2(&localState);
+        for (i = 0; i < N; ++i) {
+            lambda = (2 * k * expf(-k * dt) * vt) / (sigma * sigma * (1 - expf(-k * dt)));
+            N_p = curand_poisson(&localState, lambda);
+            gamma = gamma_distribution(d + N_p, &localState);
+            
+            vt_next = (sigma * sigma * (1.0f - expf(-k * dt)) / (2.0f * k)) * gamma;
 
-            S = S + r * S * dt + sqrtf(V)*S*sqrtf(dt)*(rho*G1.x+sqrtf(1-rho*rho)*G2.x);
-            V = V + k*(theta - V)*dt + sigma*sqrtf(V)*sqrtf(dt)*G1.x;
-            V = abs(V);            
+            vI += 0.5f * (vt + vt_next) * dt;
+
+            vt = vt_next;
         }
+        //vt = v1;
 
-        R1s[threadIdx.x] = fmaxf(0.0f, S - K)/n;
-        R2s[threadIdx.x] = V/n;
+        float integral_W = (1.0f / sigma) * (vt - v_0 - k * theta + k * vI);
+        float m = -0.5f * vI + rho * integral_W;
+        float sigma2 = (1.0f - rho * rho) * vI;
+        St = expf(m + sqrtf(sigma2) * curand_normal(&localState));
+
+        // reduction
+
+        R1s[threadIdx.x] = fmaxf(0.0f, St - K)/n;
+        R2s[threadIdx.x] = vt/n;
 
         __syncthreads(); // wait for all threads to finish the computation
 
@@ -54,10 +120,8 @@ namespace nmch::methods::kernels{
             atomicAdd(sum +1, R2s[0]);
         }
 
-        // if am doing only one montecarlo simulation
-        // I haeve to begin again the sequence
-        // state[idx] = localState;
-    };
+    }
+
 
 } // namespace nmch::methods::kernels
 
@@ -65,7 +129,7 @@ namespace nmch::methods
 {
 
     template <typename rnd_state>
-    NMCH_FE_K1<rnd_state>::NMCH_FE_K1(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_EM_K1<rnd_state>::NMCH_EM_K1(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
     NMCH<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
     {
         // each thread will have its own state
@@ -73,20 +137,20 @@ namespace nmch::methods
     };
 
     template <typename rnd_state>
-    void NMCH_FE_K1<rnd_state>::init_curand_state()
+    void NMCH_EM_K1<rnd_state>::init_curand_state()
     {
 	    nmch::random::init_curand_state_k<<<this->NB, this->NTPB>>>(states);
     };
 
     template <typename rnd_state>
-    void NMCH_FE_K1<rnd_state>::finalize()
+    void NMCH_EM_K1<rnd_state>::finalize()
     {
         cudaFree(sum);
         cudaFree(states);
     };
 
     template <typename rnd_state>
-    void NMCH_FE_K1<rnd_state>::print_stats()
+    void NMCH_EM_K1<rnd_state>::print_stats()
     {   
         //call the print_stats of the base class
         NMCH<rnd_state>::print_stats();
@@ -102,23 +166,23 @@ namespace nmch::methods
     }
 
     // definition of the base class to avoid compilation errors
-    template class NMCH_FE_K1<curandStateXORWOW_t>;
-    template class NMCH_FE_K1<curandStateMRG32k3a_t>;
-    template class NMCH_FE_K1<curandStatePhilox4_32_10_t>;
+    template class NMCH_EM_K1<curandStateXORWOW_t>;
+    template class NMCH_EM_K1<curandStateMRG32k3a_t>;
+    template class NMCH_EM_K1<curandStatePhilox4_32_10_t>;
     
-} // NMCH_FE_K1
+} // NMCH_EM_K1
 
 
 namespace nmch::methods
 {
 
     template <typename rnd_state>
-    NMCH_FE_K1_MM<rnd_state>::NMCH_FE_K1_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
-    NMCH_FE_K1<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
+    NMCH_EM_K1_MM<rnd_state>::NMCH_EM_K1_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_EM_K1<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
     {};
 
     template <typename rnd_state>
-    void NMCH_FE_K1_MM<rnd_state>::init()
+    void NMCH_EM_K1_MM<rnd_state>::init()
     {
         // one accumulator for the price and one for the variance
         cudaMallocManaged(&(this->sum), 2 * sizeof(float));
@@ -129,14 +193,14 @@ namespace nmch::methods
 
     template <typename rnd_state>
     void
-    NMCH_FE_K1_MM<rnd_state>::compute()
+    NMCH_EM_K1_MM<rnd_state>::compute()
     {
         cudaEvent_t start, stop;			// GPU timer instructions
         cudaEventCreate(&start);			// GPU timer instructions
         cudaEventCreate(&stop);				// GPU timer instructions
         cudaEventRecord(start, 0);			// GPU timer instructions
 
-        kernels::FE_k1<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
+        kernels::EM_k1<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
                 this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
                 this->sum, this->state_numbers);
 
@@ -156,22 +220,22 @@ namespace nmch::methods
     };
 
     // definition of the base class to avoid compilation errors
-    template class NMCH_FE_K1_MM<curandStateXORWOW_t>;
-    template class NMCH_FE_K1_MM<curandStateMRG32k3a_t>;
-    template class NMCH_FE_K1_MM<curandStatePhilox4_32_10_t>;
+    template class NMCH_EM_K1_MM<curandStateXORWOW_t>;
+    template class NMCH_EM_K1_MM<curandStateMRG32k3a_t>;
+    template class NMCH_EM_K1_MM<curandStatePhilox4_32_10_t>;
     
-} // NMCH_FE_K1_MM
+} // NMCH_EM_K1_MM
 
-
+/* 
 namespace nmch::methods
 {
     template <typename rnd_state>
-    NMCH_FE_K1_PgM<rnd_state>::NMCH_FE_K1_PgM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
-    NMCH_FE_K1<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
+    NMCH_FE_K2_PgM<rnd_state>::NMCH_FE_K2_PgM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_FE_K2<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
     {};
 
     template <typename rnd_state>
-    void NMCH_FE_K1_PgM<rnd_state>::init()
+    void NMCH_FE_K2_PgM<rnd_state>::init()
     {
         // one accumulator for the price and one for the variance
         cudaMalloc(&(this->sum), 2 * sizeof(float));
@@ -182,7 +246,7 @@ namespace nmch::methods
 
     template <typename rnd_state>
     void
-    NMCH_FE_K1_PgM<rnd_state>::compute()
+    NMCH_FE_K2_PgM<rnd_state>::compute()
     {   
         float result[2];
 
@@ -191,7 +255,7 @@ namespace nmch::methods
         cudaEventCreate(&stop);				// GPU timer instructions
         cudaEventRecord(start, 0);			// GPU timer instructions
 
-        kernels::FE_k1<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
+        kernels::MC_k2<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
                 this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
                 this->sum, this->state_numbers);
 
@@ -210,22 +274,22 @@ namespace nmch::methods
         this->volatility = result[1];
     };
 
-    template class NMCH_FE_K1_PgM<curandStateXORWOW_t>;
-    template class NMCH_FE_K1_PgM<curandStateMRG32k3a_t>;
-    template class NMCH_FE_K1_PgM<curandStatePhilox4_32_10_t>;
-} //NMCH_FE_K1_PgM
+    template class NMCH_FE_K2_PgM<curandStateXORWOW_t>;
+    template class NMCH_FE_K2_PgM<curandStateMRG32k3a_t>;
+    template class NMCH_FE_K2_PgM<curandStatePhilox4_32_10_t>;
+} //NMCH_FE_K2_PgM
 
 namespace nmch::methods
 {
 
     template <typename rnd_state>
-    NMCH_FE_K1_PiM<rnd_state>::NMCH_FE_K1_PiM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
-    NMCH_FE_K1<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
+    NMCH_FE_K2_PiM<rnd_state>::NMCH_FE_K2_PiM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_FE_K2<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
     {};
 
     template <typename rnd_state>
     void 
-    NMCH_FE_K1_PiM<rnd_state>::init()
+    NMCH_FE_K2_PiM<rnd_state>::init()
     {
         //pinning the memory on the host
         //cudaHostAlloc(&result, 2*sizeof(float), cudaHostAllocDefault);
@@ -240,22 +304,22 @@ namespace nmch::methods
 
     template <typename rnd_state>
     void 
-    NMCH_FE_K1_PiM<rnd_state>::finalize()
+    NMCH_FE_K2_PiM<rnd_state>::finalize()
     {
         cudaFreeHost(result);
-        NMCH_FE_K1<rnd_state>::finalize();
+        NMCH_FE_K2<rnd_state>::finalize();
     };
 
     template <typename rnd_state>
     void
-    NMCH_FE_K1_PiM<rnd_state>::compute()
+    NMCH_FE_K2_PiM<rnd_state>::compute()
     {   
         cudaEvent_t start, stop;			// GPU timer instructions
         cudaEventCreate(&start);			// GPU timer instructions
         cudaEventCreate(&stop);				// GPU timer instructions
         cudaEventRecord(start, 0);			// GPU timer instructions
 
-        kernels::FE_k1<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
+        kernels::MC_k2<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
                 this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
                 this->sum, this->state_numbers);
 
@@ -274,7 +338,8 @@ namespace nmch::methods
         this->volatility = result[1];
     };
 
-    template class NMCH_FE_K1_PiM<curandStateXORWOW_t>;
-    template class NMCH_FE_K1_PiM<curandStateMRG32k3a_t>;
-    template class NMCH_FE_K1_PiM<curandStatePhilox4_32_10_t>;
+    template class NMCH_FE_K2_PiM<curandStateXORWOW_t>;
+    template class NMCH_FE_K2_PiM<curandStateMRG32k3a_t>;
+    template class NMCH_FE_K2_PiM<curandStatePhilox4_32_10_t>;
 }
+ */
