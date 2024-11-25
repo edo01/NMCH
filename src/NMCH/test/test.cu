@@ -1,6 +1,5 @@
 #include "NMCH/methods/NMCH_FE.hpp"
 #include "NMCH/methods/NMCH_EM.hpp"
-//#include <curand_kernel.h>
 
 using namespace nmch::methods;
 
@@ -15,12 +14,11 @@ int main(int argc, char **argv)
 	//float K = S_0;
 	float r = 0.0f;
 	float k = 0.5f;
-	float rho = -0.7; //tho check
+	float rho = -0.7; // paper uses -0.7
 	float theta = 0.1f;
 	float sigma = 0.3f;
 	int N = 1000;
 
-	// cuda timing
     NMCH_EM_K1_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
     nmch.init();
 	nmch.compute();

@@ -20,9 +20,9 @@
  * Where:
  * - The spot values $S_0 = 1$ and $v_0 = 0.1$,
  * - $r$ is the risk-free interest rate, assumed to be $r = 0$,
- * - $\kappa$ is the mean reversion rate of the volatility,
- * - $\theta$ is the long-term volatility,
- * - $\sigma$ is the volatility of volatility,
+ * - $\kappa$ is the mean reversion rate of the variance,
+ * - $\theta$ is the long-term variance,
+ * - $\sigma$ is the volatility of variance,
  * - $W_t$ and $Z_t$ are independent Brownian motions.
  * 
  * In this project, we aim to compare two distinct methods for simulating an at-the-money call option (where "at-the-money" here means $K = S_0 = 1$) at maturity $T = 1$ under the Heston model. The option has a payoff given by $f(x) = (x - K)^+$, so we want to simulate with Monte Carlo the expectation $E[f(S_T)] = E[(S_1 - 1)^+]$. 
@@ -71,14 +71,14 @@ namespace nmch::methods
             * @param S_0 Spot values
             * @param r risk-free interest rate  
             * @param k mean reversion rate of the volatility
-            * @param theta long-term volatility
-            * @param sigma volatility of the volatility
+            * @param theta long-term variance
+            * @param sigma volatility of the variance
             * @param N Number of time steps            
             */
             NMCH(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
 
             /**
-             * Compute the price of the option and the volatility at time T
+             * Compute the price of the option and the variance at time T
              */
             virtual void compute() = 0;
             /**
@@ -101,9 +101,9 @@ namespace nmch::methods
             float get_strike_price() const { return strike_price; }
 
             /**
-            * @return the volatility at time T
+            * @return the variance at time T
             */
-            float get_volatility() const { return volatility; }
+            float get_variance() const { return variance; }
 
 
             virtual ~NMCH() = default;
@@ -117,19 +117,19 @@ namespace nmch::methods
             float T;
             /* Initial price */
             float S_0;
-            /* Initial volatility */
+            /* Initial variance */
             float v_0;
             /* Market price at time T - since it is at-the-money S_0=K */
             float K;
             /* risk-free interest rate */
             float r;
-            /* mean reversion rate of the volatility */
+            /* mean reversion rate of the variance */
             float k;
             /* correlation */
             float rho;
-            /* long-term volatility */
+            /* long-term variance */
             float theta;
-            /* volatility of the volatility */
+            /* volatility of the variance */
             float sigma;
             /* Number of time steps */
             int N;
@@ -137,8 +137,8 @@ namespace nmch::methods
             float dt;
             /* final strike_price */
             float strike_price;
-            /* final volatility*/
-            float volatility;
+            /* final variance*/
+            float variance;
     };
 
 } // namespace nmch::methods

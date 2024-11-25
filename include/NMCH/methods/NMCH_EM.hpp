@@ -1,5 +1,5 @@
-#ifndef NMCH_FW_EULER_HPP
-#define NMCH_FW_EULER_HPP
+#ifndef NMCH_EM_EULER_HPP
+#define NMCH_EM_EULER_HPP
 
 #include "NMCH/methods/NMCH.hpp"
 #include <curand_kernel.h>
@@ -25,9 +25,9 @@ namespace nmch::methods
             * @param T Time of the maturity
             * @param S_0 Spot values
             * @param r risk-free interest rate  
-            * @param k mean reversion rate of the volatility
-            * @param theta long-term volatility
-            * @param sigma volatility of the volatility
+            * @param k mean reversion rate of the variance
+            * @param theta long-term variance
+            * @param sigma volatility of the variance
             * @param N Number of time steps            
             */
             NMCH_EM_K1(int NTPB, int NB, float T, float S_0, float v_0, float r, float k,float rho, float theta, float sigma, int N);

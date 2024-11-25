@@ -11,28 +11,43 @@ namespace nmch::methods::kernels{
     {
 
         int idx = blockDim.x * blockIdx.x + threadIdx.x;
-        rnd_state localState = state[idx]; // in this way we avoid two different series to be the same
-        float2 G1, G2;
-        float S = S_0;
-        float V = v_0;
         extern __shared__ float A[]; // dynamically allocated in the kernel call
-        float *R1s, * R2s; 
-        R1s = A;
-        R2s = R1s + blockDim.x;
-        int i;
+        // pointers to the shared memory
+        float *SR, *VR; 
+        SR = A; // stock price reduction 
+        VR = SR + blockDim.x; // variance reduction
 
+        // initialize the random state
+        rnd_state localState = state[idx]; 
+
+        float2 G;
+        float St = S_0;
+        float Vt = v_0;
+        int i;
+        const float sqrt_dt = sqrtf(dt);
+        const float sqrt_rho = sqrtf(1-rho*rho);
+
+        /*  ###################################
+                    FORWARD EULER
+            ################################### */
         for(i = 0; i<N; i++)
         {
-            G1 = curand_normal2(&localState);
-            G2 = curand_normal2(&localState);
+            G = curand_normal2(&localState); // returns two normally distributed numbers
 
-            S = S + r * S * dt + sqrtf(V)*S*sqrtf(dt)*(rho*G1.x+sqrtf(1-rho*rho)*G2.x);
-            V = V + k*(theta - V)*dt + sigma*sqrtf(V)*sqrtf(dt)*G1.x;
-            V = abs(V);            
+            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
+            Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
+            Vt = abs(Vt);            
         }
+        // St = S1, Vt = V1
 
-        R1s[threadIdx.x] = fmaxf(0.0f, S - K)/n;
-        R2s[threadIdx.x] = V/n;
+
+        /**
+         * ###################################
+                        REDUCTION
+            ###################################
+         */
+        SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
+        VR[threadIdx.x] = Vt/n;
 
         __syncthreads(); // wait for all threads to finish the computation
 
@@ -41,8 +56,8 @@ namespace nmch::methods::kernels{
         {
             if(threadIdx.x < i)
             {
-                R1s[threadIdx.x] += R1s[threadIdx.x + i];
-                R2s[threadIdx.x] += R2s[threadIdx.x + i];
+                SR[threadIdx.x] += SR[threadIdx.x + i];
+                VR[threadIdx.x] += VR[threadIdx.x + i];
             }
             __syncthreads(); // wait for all threads to finish the computation
             i /= 2;
@@ -50,8 +65,8 @@ namespace nmch::methods::kernels{
 
         if(threadIdx.x == 0)
         {
-            atomicAdd(sum, R1s[0]);
-            atomicAdd(sum +1, R2s[0]);
+            atomicAdd(sum, SR[0]);
+            atomicAdd(sum +1, VR[0]);
         }
 
         // if am doing only one montecarlo simulation
@@ -91,9 +106,9 @@ namespace nmch::methods
         //call the print_stats of the base class
         NMCH<rnd_state>::print_stats();
         printf("The estimated price is equal to %f\n", this->strike_price);
-        printf("The estimated volatility is equal to %f\n", this->volatility);
+        printf("The estimated variance is equal to %f\n", this->variance);
         printf("error associated to a confidence interval of 95%% = %f\n",
-            1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->volatility - 
+            1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
             (this->strike_price * this->strike_price)))/sqrt((double)this->state_numbers));
         printf("The true price %f\n", this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
                                         this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
@@ -152,7 +167,7 @@ namespace nmch::methods
         //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = this->sum[0];
-        this->volatility = this->sum[1];
+        this->variance = this->sum[1];
     };
 
     // definition of the base class to avoid compilation errors
@@ -207,7 +222,7 @@ namespace nmch::methods
         cudaMemcpy(&result, this->sum, 2*sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = result[0];
-        this->volatility = result[1];
+        this->variance = result[1];
     };
 
     template class NMCH_FE_K1_PgM<curandStateXORWOW_t>;
@@ -271,7 +286,7 @@ namespace nmch::methods
         testCUDA(cudaMemcpy(result, this->sum, 2*sizeof(float), cudaMemcpyDeviceToHost));
 
         this->strike_price = result[0];
-        this->volatility = result[1];
+        this->variance = result[1];
     };
 
     template class NMCH_FE_K1_PiM<curandStateXORWOW_t>;

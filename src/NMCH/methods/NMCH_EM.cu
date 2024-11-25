@@ -5,7 +5,7 @@
 
 namespace nmch::methods::kernels{
     
-    template <typename rnd_state>
+    /* template <typename rnd_state>
     __device__
     float gamma_distribution(float alpha, rnd_state* state) 
     {
@@ -46,59 +46,112 @@ namespace nmch::methods::kernels{
                 if (logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) return d * v * powf(u, 1.0f / alpha);
             }
         }
+    } */
+
+    template <typename rnd_state>
+    __device__
+    float gamma_distribution(rnd_state* state, float alpha) 
+    {
+        float d, c, x, v, u;
+        
+        // if alpha < 1: // we set alpha = alpha + 1 and we use the fact that gamma_alpha = gamma_{alpha + 1} * U^{1/alpha}
+        //
+        // 1. setup d=a-1/3, c=1/sqrt(9d)
+        // 2. generate v = (1 + cX)^3 with x ~ N(0,1)
+        // 3. repeat until v > 0
+        // 4. generate U ~ U(0,1)
+        // 5. if U < 1 - 0.0331x^4 return d*v (or d*v*U^(1/a) if a < 1)
+        // 6. if log(U) < 0.5x^2 + d(1-v + log(v)) return dv (or d*v*U^(1/a) if a < 1)
+        // else goto 2
+
+        if(alpha >= 1.0f){
+            u       = 1.0f;
+        }else{
+            alpha   += 1.0f;
+            u       = curand_uniform(state);
+            u       = powf(u, 1.0f / alpha);
+        }
+        // synchronization point (CARRIED BY THE COMPILER(?)) no need to put a __syncthreads() here
+
+        // step 1
+        d = alpha - 1.0f / 3.0f;
+        c = 1.0f / sqrtf(9.0f * d);
+
+        while (true) {
+            // step 2
+            do{ x = curand_normal(state); v = 1.0f + c * x; }while (v <= 0.0f);
+            v = v * v * v;
+            // step 3
+            u = curand_uniform(state);
+            // step 5 and 6
+            if (u < 1.0f - 0.0331f * (x * x) * (x * x) || 
+                logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) 
+                    return d * v * u;
+        }
     }
+
 
     template <typename rnd_state>
     __global__ 
-    /* void EM_K1(float *d_results_exact, int steps, float dt, float kappa, 
-            float theta, float sigma, float rho, rnd_state* state)  */
     void EM_k1(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
                             float K, int N, rnd_state* state, float* sum, int n)
     {
         int tid = blockIdx.x * blockDim.x + threadIdx.x;
-        extern __shared__ float A[]; // dynamically allocated in the kernel call
+        extern __shared__ float A[]; // dynamically allocated shared memory
+        // pointers to the shared memory
+        float *SR, *VR; 
+        SR = A; // stock price reduction 
+        VR = SR + blockDim.x; // variance reduction
+
+        // get the local state
         rnd_state localState = state[tid];
 
         int i;
-
         int N_p; // poisson 
+        float lambda, gamma, vt_next, m, sigma2;
 
-        // initialization of the volatility and the price
+        // initialization of the variance and the price
         float St = S_0;
         float vt = v_0;
-
-        float vI = 0.0f;
-
-        float lambda, gamma, vt_next;
-
+        float vI = 0.0f; // accumulated variance using the trapezoidal rule
+        // initializing constansts
+        const float exp_kdt = expf(-k * dt); //expf is very expensive to compute
         const float d = 2.0f * k * theta / (sigma * sigma);
+        // this part of lambda is constant, no need to compute it at each iteration
+        const float lambda_const = (2 * k * exp_kdt) / (sigma * sigma * (1 - exp_kdt)); 
 
-        float *R1s, * R2s; 
-        R1s = A;
-        R2s = R1s + blockDim.x;
-
-        for (i = 0; i < N; ++i) {
-            lambda = (2 * k * expf(-k * dt) * vt) / (sigma * sigma * (1 - expf(-k * dt)));
-            N_p = curand_poisson(&localState, lambda);
-            gamma = gamma_distribution(d + N_p, &localState);
+        /*##############################################
+         *                  SIMULATION
+         *##############################################*/
+        for (i = 0; i < N; ++i) { // advancing in time
             
-            vt_next = (sigma * sigma * (1.0f - expf(-k * dt)) / (2.0f * k)) * gamma;
+            // step 1
+            lambda = lambda_const * vt;
+            N_p = curand_poisson(&localState, lambda);
+            gamma = gamma_distribution(&localState, d + N_p);
+            // a lot of divergence here since the gamma distribution is not equally distributed among threads
+            vt_next = (sigma * sigma * (1.0f - exp_kdt) / (2.0f * k)) * gamma;
 
-            vI += 0.5f * (vt + vt_next) * dt;
+            // step 2
+            vI += 0.5f * (vt + vt_next); // dt missing????
 
+            // advance the variance
             vt = vt_next;
         }
         //vt = v1;
+        //step 3
+        m       = (1.0f / sigma) * (vt - v_0 - k * theta + k * vI);
+        // step 4
+        m       = -0.5f * vI + rho * m;
+        sigma2  = (1.0f - rho * rho) * vI;
+        //St
+        St      = expf(m + sqrtf(sigma2) * curand_normal(&localState));
 
-        float integral_W = (1.0f / sigma) * (vt - v_0 - k * theta + k * vI);
-        float m = -0.5f * vI + rho * integral_W;
-        float sigma2 = (1.0f - rho * rho) * vI;
-        St = expf(m + sqrtf(sigma2) * curand_normal(&localState));
-
-        // reduction
-
-        R1s[threadIdx.x] = fmaxf(0.0f, St - K)/n;
-        R2s[threadIdx.x] = vt/n;
+        /*##############################################
+         *                  REDUCTION
+         *##############################################*/
+        SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
+        VR[threadIdx.x] = vt/n;
 
         __syncthreads(); // wait for all threads to finish the computation
 
@@ -107,8 +160,8 @@ namespace nmch::methods::kernels{
         {
             if(threadIdx.x < i)
             {
-                R1s[threadIdx.x] += R1s[threadIdx.x + i];
-                R2s[threadIdx.x] += R2s[threadIdx.x + i];
+                SR[threadIdx.x] += SR[threadIdx.x + i];
+                VR[threadIdx.x] += VR[threadIdx.x + i];
             }
             __syncthreads(); // wait for all threads to finish the computation
             i /= 2;
@@ -116,8 +169,8 @@ namespace nmch::methods::kernels{
 
         if(threadIdx.x == 0)
         {
-            atomicAdd(sum, R1s[0]);
-            atomicAdd(sum +1, R2s[0]);
+            atomicAdd(sum,      SR[0]);
+            atomicAdd(sum + 1,  VR[0]);
         }
 
     }
@@ -155,9 +208,9 @@ namespace nmch::methods
         //call the print_stats of the base class
         NMCH<rnd_state>::print_stats();
         printf("The estimated price is equal to %f\n", this->strike_price);
-        printf("The estimated volatility is equal to %f\n", this->volatility);
+        printf("The estimated variance is equal to %f\n", this->variance);
         printf("error associated to a confidence interval of 95%% = %f\n",
-            1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->volatility - 
+            1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
             (this->strike_price * this->strike_price)))/sqrt((double)this->state_numbers));
         printf("The true price %f\n", this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
                                         this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
@@ -216,7 +269,7 @@ namespace nmch::methods
         //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = this->sum[0];
-        this->volatility = this->sum[1];
+        this->variance = this->sum[1];
     };
 
     // definition of the base class to avoid compilation errors
@@ -271,7 +324,7 @@ namespace nmch::methods
         cudaMemcpy(&result, this->sum, 2*sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = result[0];
-        this->volatility = result[1];
+        this->variance = result[1];
     };
 
     template class NMCH_FE_K2_PgM<curandStateXORWOW_t>;
@@ -335,7 +388,7 @@ namespace nmch::methods
         testCUDA(cudaMemcpy(result, this->sum, 2*sizeof(float), cudaMemcpyDeviceToHost));
 
         this->strike_price = result[0];
-        this->volatility = result[1];
+        this->variance = result[1];
     };
 
     template class NMCH_FE_K2_PiM<curandStateXORWOW_t>;
