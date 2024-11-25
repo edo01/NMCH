@@ -64,13 +64,9 @@ namespace nmch::methods::kernels{
         // 6. if log(U) < 0.5x^2 + d(1-v + log(v)) return dv (or d*v*U^(1/a) if a < 1)
         // else goto 2
 
-        if(alpha >= 1.0f){
-            u       = 1.0f;
-        }else{
-            alpha   += 1.0f;
-            u       = curand_uniform(state);
-            u       = powf(u, 1.0f / alpha);
-        }
+        alpha = alpha>=1.0f ? alpha : alpha + 1.0f;
+        const float C = alpha>=1.0f ? 1.0f : powf(curand_normal(state), 1.0f / alpha);
+
         // synchronization point (CARRIED BY THE COMPILER(?)) no need to put a __syncthreads() here
 
         // step 1
@@ -84,9 +80,9 @@ namespace nmch::methods::kernels{
             // step 3
             u = curand_uniform(state);
             // step 5 and 6
-            if (u < 1.0f - 0.0331f * (x * x) * (x * x) || 
-                logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) 
-                    return d * v * u;
+            if ((u < (1.0f - (0.0331f * x * x * x * x))) || 
+                (logf(u) < ((0.5f * x * x) + (d * (1.0f - v + logf(v)))))) 
+                    return d * v * C;
         }
     }
 
@@ -108,13 +104,17 @@ namespace nmch::methods::kernels{
 
         int i;
         int N_p; // poisson 
-        float lambda, gamma, vt_next, m, sigma2;
+        float lambda, gamma, Vt_next, m, sigma2;
 
         // initialization of the variance and the price
         float St = S_0;
-        float vt = v_0;
+        float Vt = v_0;
         float vI = 0.0f; // accumulated variance using the trapezoidal rule
         // initializing constansts
+        /* WE CAN TRY __expf(-k * dt) instead of expf(-k * dt) 
+        is more efficient because it uses the hardware exp instruction 
+        but it is less precise*/
+
         const float exp_kdt = expf(-k * dt); //expf is very expensive to compute
         const float d = 2.0f * k * theta / (sigma * sigma);
         // this part of lambda is constant, no need to compute it at each iteration
@@ -124,34 +124,41 @@ namespace nmch::methods::kernels{
          *                  SIMULATION
          *##############################################*/
         for (i = 0; i < N; ++i) { // advancing in time
-            
             // step 1
-            lambda = lambda_const * vt;
+            lambda = lambda_const * Vt; 
             N_p = curand_poisson(&localState, lambda);
             gamma = gamma_distribution(&localState, d + N_p);
             // a lot of divergence here since the gamma distribution is not equally distributed among threads
-            vt_next = (sigma * sigma * (1.0f - exp_kdt) / (2.0f * k)) * gamma;
+            Vt_next = (sigma * sigma * (1.0f - exp_kdt) / (2.0f * k)) * gamma;
 
             // step 2
-            vI += 0.5f * (vt + vt_next); // dt missing????
+            vI += 0.5f * (Vt + Vt_next)*dt; // dt missing????
 
             // advance the variance
-            vt = vt_next;
+            Vt = Vt_next;
         }
-        //vt = v1;
+        //Vt = v1;
         //step 3
-        m       = (1.0f / sigma) * (vt - v_0 - k * theta + k * vI);
+        m       = (1.0f / sigma) * (Vt - v_0 - k * theta + k * vI);
         // step 4
         m       = -0.5f * vI + rho * m;
         sigma2  = (1.0f - rho * rho) * vI;
         //St
+        // what happens if we use the hardware exp instruction?
+        // what happens if we change curand_normal to curand_normal2?
         St      = expf(m + sqrtf(sigma2) * curand_normal(&localState));
+
+
+        /* if(threadIdx.x == 0)
+        {
+            printf("St = %f, Vt = %f\n", St, Vt);
+        } */
 
         /*##############################################
          *                  REDUCTION
          *##############################################*/
         SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
-        VR[threadIdx.x] = vt/n;
+        VR[threadIdx.x] = Vt/n;
 
         __syncthreads(); // wait for all threads to finish the computation
 
@@ -172,7 +179,6 @@ namespace nmch::methods::kernels{
             atomicAdd(sum,      SR[0]);
             atomicAdd(sum + 1,  VR[0]);
         }
-
     }
 
 

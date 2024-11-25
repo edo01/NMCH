@@ -9,7 +9,7 @@ int main(int argc, char **argv)
 	int NB = 512;
 //	int n = NB * NTPB;
 	float T = 1.0f;
-	float S_0 = 50.0f;
+	float S_0 = 1.0f;
 	float v_0 = 0.1f;
 	//float K = S_0;
 	float r = 0.0f;

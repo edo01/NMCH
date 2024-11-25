@@ -36,10 +36,13 @@ namespace nmch::methods::kernels{
 
             St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
             Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
-            Vt = abs(Vt);            
+            Vt = abs(Vt);        
+            if(blockIdx.x == 0 && threadIdx.x == 0)
+            {
+                printf("St = %f, Vt = %f\n", St, Vt);
+            }    
         }
         // St = S1, Vt = V1
-
 
         /**
          * ###################################
