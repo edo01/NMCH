@@ -43,12 +43,14 @@ namespace nmch::methods
             /* number of states*/
             int state_numbers;  
             /* execution time */
-            float Tim;
+            float Tim_exec;
+            /* initialization time */
+            float Tim_init;
 
             /**
                 Initialize the random states of the threads
             */
-            virtual void init_curand_state();
+            virtual void init_curand_state(unsigned long long seed);
     };
 
     template <typename rnd_state>
@@ -56,7 +58,7 @@ namespace nmch::methods
         public:
             NMCH_FE_K1_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
             virtual void compute() override;
-            virtual void init() override;
+            virtual void init(unsigned long long seed) override;
             virtual ~NMCH_FE_K1_MM() = default;
     };
 
@@ -65,7 +67,7 @@ namespace nmch::methods
         public:
             NMCH_FE_K1_PgM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
             virtual void compute() override;
-            virtual void init() override;
+            virtual void init(unsigned long long seed) override;
             virtual ~NMCH_FE_K1_PgM() = default;
     };
     
@@ -74,7 +76,7 @@ namespace nmch::methods
         public:
             NMCH_FE_K1_PiM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
             virtual void compute() override;
-            virtual void init() override;
+            virtual void init(unsigned long long seed) override;
             virtual void finalize() override;
             virtual ~NMCH_FE_K1_PiM() = default;
         private:

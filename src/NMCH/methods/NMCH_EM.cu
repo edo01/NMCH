@@ -5,49 +5,6 @@
 
 namespace nmch::methods::kernels{
     
-    /* template <typename rnd_state>
-    __device__
-    float gamma_distribution(float alpha, rnd_state* state) 
-    {
-        float d, c, x, v, u;
-        
-        // big divercence in this case
-
-        if (alpha >= 1.0f) {
-            d = alpha - 1.0f / 3.0f;
-            c = 1.0f / sqrtf(9.0f * d);
-
-            while (true) {
-                x = curand_normal(state);
-                v = 1.0f + c * x;
-                v = v * v * v;
-                if (v <= 0.0f) continue;
-                u = curand_uniform(state);
-                if (u < 1.0f - 0.0331f * (x * x) * (x * x)) return d * v;
-                if (logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) return d * v;
-            }
-        } else { // case alpha < 1
-            // we are using the fact gamma_alpha = gamma_{alpha + 1} * U^{1/alpha}
-            // 
-            //A random variable X ~ G(alpha + 1, beta), then: Y = X * U^{1/alpha}, then Y ~G(alpha, beta).
-            u = curand_uniform(state);
-            alpha += 1.0f; // alpha + 1
-
-            d = alpha - 1.0f / 3.0f;
-            c = 1.0f / sqrtf(9.0f * d);
-
-            while (true) {
-                x = curand_normal(state);
-                v = 1.0f + c * x;
-                v = v * v * v;
-                if (v <= 0.0f) continue;
-                u = curand_uniform(state);
-                if (u < 1.0f - 0.0331f * (x * x) * (x * x)) return d * v * powf(u, 1.0f / alpha);
-                if (logf(u) < 0.5f * x * x + d * (1.0f - v + logf(v))) return d * v * powf(u, 1.0f / alpha);
-            }
-        }
-    } */
-
     template <typename rnd_state>
     __device__
     float gamma_distribution(rnd_state* state, float alpha) 
@@ -196,9 +153,9 @@ namespace nmch::methods
     };
 
     template <typename rnd_state>
-    void NMCH_EM_K1<rnd_state>::init_curand_state()
+    void NMCH_EM_K1<rnd_state>::init_curand_state(unsigned long long seed)
     {
-	    nmch::random::init_curand_state_k<<<this->NB, this->NTPB>>>(states);
+	    nmch::random::init_curand_state_k<<<this->NB, this->NTPB>>>(states, seed);
     };
 
     template <typename rnd_state>
@@ -213,6 +170,7 @@ namespace nmch::methods
     {   
         //call the print_stats of the base class
         NMCH<rnd_state>::print_stats();
+        printf("METHOD: EXACT-METHOD\n");
         printf("The estimated price is equal to %f\n", this->strike_price);
         printf("The estimated variance is equal to %f\n", this->variance);
         printf("error associated to a confidence interval of 95%% = %f\n",
@@ -221,7 +179,8 @@ namespace nmch::methods
         printf("The true price %f\n", this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
                                         this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
                                         this->sigma));
-        printf("Execution time %f ms\n", Tim);
+        printf("Execution time %f ms\n", Tim_exec);
+        printf("Initialization time %f ms\n", Tim_init);
     }
 
     // definition of the base class to avoid compilation errors
@@ -241,13 +200,25 @@ namespace nmch::methods
     {};
 
     template <typename rnd_state>
-    void NMCH_EM_K1_MM<rnd_state>::init()
+    void NMCH_EM_K1_MM<rnd_state>::init(unsigned long long seed)
     {
+        
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);	
+
         // one accumulator for the price and one for the variance
         cudaMallocManaged(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMallocManaged(&(this->states), this->state_numbers * sizeof(rnd_state));
-        this->init_curand_state();
+        this->init_curand_state(seed);
+
+        cudaEventRecord(stop, 0);			
+        cudaEventSynchronize(stop);			
+        cudaEventElapsedTime(&(this->Tim_init), start, stop);					
+        cudaEventDestroy(start);			
+        cudaEventDestroy(stop);		
     };
 
     template <typename rnd_state>
@@ -267,7 +238,7 @@ namespace nmch::methods
 
         cudaEventRecord(stop, 0);			// GPU timer instructions
         cudaEventSynchronize(stop);			// GPU timer instructions
-        cudaEventElapsedTime(&(this->Tim),			// GPU timer instructions
+        cudaEventElapsedTime(&(this->Tim_exec),			// GPU timer instructions
             start, stop);					// GPU timer instructions
         cudaEventDestroy(start);			// GPU timer instructions
         cudaEventDestroy(stop);				// GPU timer instructions
@@ -294,13 +265,13 @@ namespace nmch::methods
     {};
 
     template <typename rnd_state>
-    void NMCH_FE_K2_PgM<rnd_state>::init()
+    void NMCH_FE_K2_PgM<rnd_state>::init(unsigned long long seed)
     {
         // one accumulator for the price and one for the variance
         cudaMalloc(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
-        this->init_curand_state();
+        this->init_curand_state(seed);
     };
 
     template <typename rnd_state>
@@ -348,7 +319,7 @@ namespace nmch::methods
 
     template <typename rnd_state>
     void 
-    NMCH_FE_K2_PiM<rnd_state>::init()
+    NMCH_FE_K2_PiM<rnd_state>::init(unsigned long long seed)
     {
         //pinning the memory on the host
         //cudaHostAlloc(&result, 2*sizeof(float), cudaHostAllocDefault);
@@ -358,7 +329,7 @@ namespace nmch::methods
         cudaMalloc(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
-        this->init_curand_state();
+        this->init_curand_state(seed);
     };
 
     template <typename rnd_state>

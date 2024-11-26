@@ -36,11 +36,7 @@ namespace nmch::methods::kernels{
 
             St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
             Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
-            Vt = abs(Vt);        
-            if(blockIdx.x == 0 && threadIdx.x == 0)
-            {
-                printf("St = %f, Vt = %f\n", St, Vt);
-            }    
+            Vt = abs(Vt);
         }
         // St = S1, Vt = V1
 
@@ -91,9 +87,9 @@ namespace nmch::methods
     };
 
     template <typename rnd_state>
-    void NMCH_FE_K1<rnd_state>::init_curand_state()
+    void NMCH_FE_K1<rnd_state>::init_curand_state(unsigned long long seed)
     {
-	    nmch::random::init_curand_state_k<<<this->NB, this->NTPB>>>(states);
+	    nmch::random::init_curand_state_k<<<this->NB, this->NTPB>>>(states, seed);
     };
 
     template <typename rnd_state>
@@ -108,6 +104,7 @@ namespace nmch::methods
     {   
         //call the print_stats of the base class
         NMCH<rnd_state>::print_stats();
+        printf("METHOD: FORWARD EULER\n");
         printf("The estimated price is equal to %f\n", this->strike_price);
         printf("The estimated variance is equal to %f\n", this->variance);
         printf("error associated to a confidence interval of 95%% = %f\n",
@@ -116,7 +113,8 @@ namespace nmch::methods
         printf("The true price %f\n", this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
                                         this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
                                         this->sigma));
-        printf("Execution time %f ms\n", Tim);
+        printf("Execution time %f ms\n", Tim_exec);
+        printf("Initialization time %f ms\n", Tim_init);
     }
 
     // definition of the base class to avoid compilation errors
@@ -136,23 +134,34 @@ namespace nmch::methods
     {};
 
     template <typename rnd_state>
-    void NMCH_FE_K1_MM<rnd_state>::init()
+    void NMCH_FE_K1_MM<rnd_state>::init(unsigned long long seed)
     {
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);			
+        
         // one accumulator for the price and one for the variance
         cudaMallocManaged(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMallocManaged(&(this->states), this->state_numbers * sizeof(rnd_state));
-        this->init_curand_state();
+        this->init_curand_state(seed);
+        
+        cudaEventRecord(stop, 0);			
+        cudaEventSynchronize(stop);			
+        cudaEventElapsedTime(&(this->Tim_init), start, stop);					
+        cudaEventDestroy(start);			
+        cudaEventDestroy(stop);		
     };
 
     template <typename rnd_state>
     void
     NMCH_FE_K1_MM<rnd_state>::compute()
     {
-        cudaEvent_t start, stop;			// GPU timer instructions
-        cudaEventCreate(&start);			// GPU timer instructions
-        cudaEventCreate(&stop);				// GPU timer instructions
-        cudaEventRecord(start, 0);			// GPU timer instructions
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);			
 
         kernels::FE_k1<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
                 this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
@@ -162,7 +171,7 @@ namespace nmch::methods
 
         cudaEventRecord(stop, 0);			// GPU timer instructions
         cudaEventSynchronize(stop);			// GPU timer instructions
-        cudaEventElapsedTime(&(this->Tim),			// GPU timer instructions
+        cudaEventElapsedTime(&(this->Tim_exec),			// GPU timer instructions
             start, stop);					// GPU timer instructions
         cudaEventDestroy(start);			// GPU timer instructions
         cudaEventDestroy(stop);				// GPU timer instructions
@@ -189,13 +198,24 @@ namespace nmch::methods
     {};
 
     template <typename rnd_state>
-    void NMCH_FE_K1_PgM<rnd_state>::init()
+    void NMCH_FE_K1_PgM<rnd_state>::init(unsigned long long seed)
     {
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);	
+
         // one accumulator for the price and one for the variance
         cudaMalloc(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
-        this->init_curand_state();
+        this->init_curand_state(seed);
+
+        cudaEventRecord(stop, 0);			
+        cudaEventSynchronize(stop);			
+        cudaEventElapsedTime(&(this->Tim_init), start, stop);					
+        cudaEventDestroy(start);			
+        cudaEventDestroy(stop);		
     };
 
     template <typename rnd_state>
@@ -204,10 +224,10 @@ namespace nmch::methods
     {   
         float result[2];
 
-        cudaEvent_t start, stop;			// GPU timer instructions
-        cudaEventCreate(&start);			// GPU timer instructions
-        cudaEventCreate(&stop);				// GPU timer instructions
-        cudaEventRecord(start, 0);			// GPU timer instructions
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);			
 
         kernels::FE_k1<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
                 this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
@@ -215,12 +235,11 @@ namespace nmch::methods
 
         // no need to synchronize the device since we are using the memcopy after.
 
-        cudaEventRecord(stop, 0);			// GPU timer instructions
-        cudaEventSynchronize(stop);			// GPU timer instructions
-        cudaEventElapsedTime(&(this->Tim),			// GPU timer instructions
-            start, stop);					// GPU timer instructions
-        cudaEventDestroy(start);			// GPU timer instructions
-        cudaEventDestroy(stop);				// GPU timer instructions
+        cudaEventRecord(stop, 0);			
+        cudaEventSynchronize(stop);			
+        cudaEventElapsedTime(&(this->Tim_exec), start, stop);		
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);	
 
         cudaMemcpy(&result, this->sum, 2*sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -243,8 +262,13 @@ namespace nmch::methods
 
     template <typename rnd_state>
     void 
-    NMCH_FE_K1_PiM<rnd_state>::init()
+    NMCH_FE_K1_PiM<rnd_state>::init(unsigned long long seed)
     {
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);	
+
         //pinning the memory on the host
         //cudaHostAlloc(&result, 2*sizeof(float), cudaHostAllocDefault);
         cudaMallocHost(&result, 2*sizeof(float));
@@ -253,7 +277,13 @@ namespace nmch::methods
         cudaMalloc(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
-        this->init_curand_state();
+        this->init_curand_state(seed);
+
+        cudaEventRecord(stop, 0);			
+        cudaEventSynchronize(stop);			
+        cudaEventElapsedTime(&(this->Tim_init), start, stop);					
+        cudaEventDestroy(start);			
+        cudaEventDestroy(stop);		
     };
 
     template <typename rnd_state>
@@ -268,10 +298,10 @@ namespace nmch::methods
     void
     NMCH_FE_K1_PiM<rnd_state>::compute()
     {   
-        cudaEvent_t start, stop;			// GPU timer instructions
-        cudaEventCreate(&start);			// GPU timer instructions
-        cudaEventCreate(&stop);				// GPU timer instructions
-        cudaEventRecord(start, 0);			// GPU timer instructions
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);			
 
         kernels::FE_k1<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
                 this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
@@ -279,12 +309,11 @@ namespace nmch::methods
 
         //cudaDeviceSynchronize(); //we are using the memcopy after.
 
-        cudaEventRecord(stop, 0);			// GPU timer instructions
-        cudaEventSynchronize(stop);			// GPU timer instructions
-        cudaEventElapsedTime(&(this->Tim),			// GPU timer instructions
-            start, stop);					// GPU timer instructions
-        cudaEventDestroy(start);			// GPU timer instructions
-        cudaEventDestroy(stop);				// GPU timer instructions
+        cudaEventRecord(stop, 0);			
+        cudaEventSynchronize(stop);			
+        cudaEventElapsedTime(&(this->Tim_exec), start, stop);					
+        cudaEventDestroy(start);			
+        cudaEventDestroy(stop);				
 
         testCUDA(cudaMemcpy(result, this->sum, 2*sizeof(float), cudaMemcpyDeviceToHost));
 

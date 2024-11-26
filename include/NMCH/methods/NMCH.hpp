@@ -89,7 +89,7 @@ namespace nmch::methods
             /**
              * Initializate the computation, such as the random states of the threads and the memory allocation.
              */
-            virtual void init() = 0;
+            virtual void init(unsigned long long seed) = 0;
             /**
              * Finalize the computation, such as the memory deallocation.
              */
