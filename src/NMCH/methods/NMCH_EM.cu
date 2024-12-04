@@ -1,3 +1,10 @@
+/**
+ * Ideas for kernel optimization: 
+ * - separate the simulation and the reduction and optimize the reduction as much as possible and then maybe merge the two kernels
+ * - use the hardware exp instruction and the hardware sqrt instruction
+ * - batch random number generation
+ https://forums.developer.nvidia.com/t/question-about-optimal-curand-use/37752
+ */
 #include "NMCH/methods/NMCH_EM.hpp"
 
 #define testCUDA(error) (nmch::utils::cuda::checkCUDA(error, __FILE__ , __LINE__))
@@ -21,10 +28,8 @@ namespace nmch::methods::kernels{
         // 6. if log(U) < 0.5x^2 + d(1-v + log(v)) return dv (or d*v*U^(1/a) if a < 1)
         // else goto 2
 
-        alpha = alpha>=1.0f ? alpha : alpha + 1.0f;
         const float C = alpha>=1.0f ? 1.0f : powf(curand_normal(state), 1.0f / alpha);
-
-        // synchronization point (CARRIED BY THE COMPILER(?)) no need to put a __syncthreads() here
+        alpha = alpha>=1.0f ? alpha : (alpha + 1.0f);
 
         // step 1
         d = alpha - 1.0f / 3.0f;
@@ -89,27 +94,23 @@ namespace nmch::methods::kernels{
             Vt_next = (sigma * sigma * (1.0f - exp_kdt) / (2.0f * k)) * gamma;
 
             // step 2
-            vI += 0.5f * (Vt + Vt_next)*dt; // dt missing????
+            vI += (Vt + Vt_next);//*dt; // dt missing????
 
             // advance the variance
             Vt = Vt_next;
         }
+        vI *= dt*0.5; // only done once for numerical stability
         //Vt = v1;
-        //step 3
+        //step 3 -  Assuming T = 1
         m       = (1.0f / sigma) * (Vt - v_0 - k * theta + k * vI);
-        // step 4
+        // step 4 
         m       = -0.5f * vI + rho * m;
+        // assume S_0 = 1
         sigma2  = (1.0f - rho * rho) * vI;
         //St
         // what happens if we use the hardware exp instruction?
         // what happens if we change curand_normal to curand_normal2?
         St      = expf(m + sqrtf(sigma2) * curand_normal(&localState));
-
-
-        /* if(threadIdx.x == 0)
-        {
-            printf("St = %f, Vt = %f\n", St, Vt);
-        } */
 
         /*##############################################
          *                  REDUCTION
@@ -168,17 +169,19 @@ namespace nmch::methods
     template <typename rnd_state>
     void NMCH_EM_K1<rnd_state>::print_stats()
     {   
+        float real_price = this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
+                                        this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
+                                        this->sigma);
         //call the print_stats of the base class
         NMCH<rnd_state>::print_stats();
         printf("METHOD: EXACT-METHOD\n");
         printf("The estimated price is equal to %f\n", this->strike_price);
         printf("The estimated variance is equal to %f\n", this->variance);
+        printf("The true price %f\n", real_price);
+        printf("Relative error committed= %f\n", abs((this->strike_price - real_price)/real_price));
         printf("error associated to a confidence interval of 95%% = %f\n",
             1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
             (this->strike_price * this->strike_price)))/sqrt((double)this->state_numbers));
-        printf("The true price %f\n", this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
-                                        this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
-                                        this->sigma));
         printf("Execution time %f ms\n", Tim_exec);
         printf("Initialization time %f ms\n", Tim_init);
     }

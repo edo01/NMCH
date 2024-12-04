@@ -102,17 +102,19 @@ namespace nmch::methods
     template <typename rnd_state>
     void NMCH_FE_K1<rnd_state>::print_stats()
     {   
+        float real_price = this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
+                                        this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
+                                        this->sigma);
         //call the print_stats of the base class
         NMCH<rnd_state>::print_stats();
-        printf("METHOD: FORWARD EULER\n");
+        printf("METHOD: FORWARD-EULER\n");
         printf("The estimated price is equal to %f\n", this->strike_price);
         printf("The estimated variance is equal to %f\n", this->variance);
+        printf("The true price %f\n", real_price);
+        printf("Relative error committed= %f\n", abs((this->strike_price - real_price)/real_price));
         printf("error associated to a confidence interval of 95%% = %f\n",
             1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
             (this->strike_price * this->strike_price)))/sqrt((double)this->state_numbers));
-        printf("The true price %f\n", this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
-                                        this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
-                                        this->sigma));
         printf("Execution time %f ms\n", Tim_exec);
         printf("Initialization time %f ms\n", Tim_init);
     }
