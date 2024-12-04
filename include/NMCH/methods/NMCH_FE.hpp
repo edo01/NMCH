@@ -1,8 +1,9 @@
 #ifndef NMCH_FW_EULER_HPP
 #define NMCH_FW_EULER_HPP
 
-#include "NMCH/methods/NMCH.hpp"
 #include <curand_kernel.h>
+#include "NMCH/methods/NMCH.hpp"
+#include "NMCH/utils/utils.hpp"
 
 // shoudn't be exposed
 namespace nmch::methods::cudakernels
@@ -60,6 +61,14 @@ namespace nmch::methods
             virtual void compute() override;
             virtual void init(unsigned long long seed) override;
             virtual ~NMCH_FE_K1_MM() = default;
+    };
+
+    template <typename rnd_state>
+    class NMCH_FE_K2_MM : public NMCH_FE_K1_MM<rnd_state> {
+        public:
+            NMCH_FE_K2_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            virtual void compute() override;
+            virtual ~NMCH_FE_K2_MM() = default;
     };
 
     template <typename rnd_state>

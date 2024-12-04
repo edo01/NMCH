@@ -2,6 +2,33 @@
 #include "NMCH/methods/NMCH_FE.hpp"
 #include "NMCH/methods/NMCH_EM.hpp"
 
+/**
+- default parameters
+- N       = 10000
+
+- NMCH_FE_K1_PgM:  
+	Execution time 52.874241 ms
+	Initialization time 6.773760 ms
+- NMCH_FE_K1_PiM
+	Execution time 52.875263 ms
+	Initialization time 7.162592 ms
+- NMCH_FE_K1_MM
+	Execution time 52.882721 ms
+	Initialization time 7.224960 ms
+
+from this first analysis, it is clear that the use of different memory spaces does not affect the performance
+of the code so we shouldn't push in this direction. For semplicity we will then use Memory Management for 
+the rest of the project.
+
+This is justified by the fact that the communication between CPU and GPU is not significant, since we are 
+moving only two floats.
+ */
+
+
+/**
+	presentation ideas: class hierarchy and speedup obtained with each strategy and why we chose a specific
+	path.
+ */
 using namespace nmch::methods;
 
 int main(int argc, char **argv)
@@ -16,7 +43,7 @@ int main(int argc, char **argv)
 	float rho = -0.7;
 	float theta = 0.1f;
 	float sigma = 0.3f;
-	int N = 50;
+	int N = 1000;
 	unsigned long long seed = 1234;
 	std::string method = "fe"; // default method
 
@@ -70,13 +97,13 @@ int main(int argc, char **argv)
 	}
 
 	if (method == "fe") {
-		NMCH_FE_K1_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+		NMCH_FE_K2_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 		nmch.init(seed);
 		nmch.compute();
 		nmch.print_stats();
 		nmch.finalize();
 	} else if (method == "em") {
-		NMCH_EM_K1_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+		NMCH_EM_K2_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 		nmch.init(seed);
 		nmch.compute();
 		nmch.print_stats();

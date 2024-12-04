@@ -62,6 +62,13 @@ namespace nmch::methods
             virtual ~NMCH_EM_K1_MM() = default;
     };
 
+    template <typename rnd_state>
+    class NMCH_EM_K2_MM : public NMCH_EM_K1_MM<rnd_state> {
+        public:
+            NMCH_EM_K2_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            virtual void compute() override;
+            virtual ~NMCH_EM_K2_MM() = default;
+    };
    /*  template <typename rnd_state>
     class NMCH_FE_K2_PgM : public NMCH_FE_K2<rnd_state> {
         public:

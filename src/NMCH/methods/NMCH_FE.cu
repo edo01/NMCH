@@ -72,6 +72,113 @@ namespace nmch::methods::kernels{
         // I haeve to begin again the sequence
         // state[idx] = localState;
     };
+ 
+    /**
+     - reduces the shared memory pressure 
+     - Whereas to communicate a data item from a register in thread B to a register in thread A via shared memory
+       requires at least 2 steps (a shared load instruction and a shared store instruction, and probably also a 
+       synchronization step), the same communication via warp shuffle requires a single operation/instruction.
+     */
+    __inline__ __device__ float warpReduceSum(float val) {
+        for (int offset = 16; offset > 0; offset /= 2) {
+            // 0xFFFFFFFF each warp contribute
+            // val is the register to be shifted
+            // offset is the distance to shift
+            val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+        }
+        return val;
+    }
+
+    // Perform block-level reduction of the warp reduced values
+    __inline__ __device__ float blockReduceSum(float val) {
+        /*if the compute capability is lower than 7.0, we are allocating more shared memory than required 
+        because the maximum number of threads per block is 512 instead of 1024*/
+        static __shared__ float shared[32]; // Shared memory for one value per warp
+        int lane = threadIdx.x % 32;        // Lane index within the warp
+        int warpId = threadIdx.x / 32;      // Warp index within the block
+
+        // Perform warp-level reduction
+        val = warpReduceSum(val); // WE ARE ASSUMING A NUMBER OF THREADS PER BLOCK WHICH IS A MULTIPLE OF THE WARP(not a strong assumption)
+
+        // Write the reduced value of each warp to shared memory (only the first thread of each warp)
+        if (lane == 0) shared[warpId] = val; 
+
+        __syncthreads();
+
+        // Let the first warp reduce all warp results
+        /*
+            At this point some shared memory may be not used
+            This may be caused from 2 reasons:
+            - we are using a compute capability lower than 7.0
+            - the number of threads per block are not the maximum possible
+            In this case we will not use all the first warp but just
+            the first blockDim.x/32 threads
+        */
+        val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : 0; 
+        if (warpId == 0) val = warpReduceSum(val); // no divergence here
+
+        return val;
+    }
+
+    /**
+     * This previous kernel was using 2 * number of threads per block floats of shared memory, while this one is using only
+     * 32 floats of shared memory.
+     */
+    template <typename rnd_state>
+    __global__ void FE_k2(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
+                            float K, int N, rnd_state* state, float* sum, int n)
+    {
+
+        int idx = blockDim.x * blockIdx.x + threadIdx.x;
+        //extern __shared__ float A[]; // dynamically allocated in the kernel call
+        // pointers to the shared memory
+        //float *SR, *VR; 
+        //SR = A; // stock price reduction 
+        //VR = SR + blockDim.x; // variance reduction
+
+        // initialize the random state
+        rnd_state localState = state[idx]; 
+
+        float2 G;
+        float St = S_0;
+        float Vt = v_0;
+        int i;
+        const float sqrt_dt = sqrtf(dt);
+        const float sqrt_rho = sqrtf(1-rho*rho);
+
+        /*  ###################################
+                    FORWARD EULER
+            ################################### */
+        
+        for(i = 0; i<N; i++)
+        {
+            G = curand_normal2(&localState); // returns two normally distributed numbers
+
+            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
+            Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
+            Vt = abs(Vt);
+        }
+        // St = S1, Vt = V1
+
+        //SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
+        //VR[threadIdx.x] = Vt/n;
+
+        /*  ###################################
+                    REDUCTION
+        ################################### */
+
+        // Perform block-level reduction
+        float partialS, partialV;
+        partialS = blockReduceSum(fmaxf(0.0f, St - K)/n);
+        partialV = blockReduceSum(Vt/n);
+
+        // Use atomicAdd to accumulate the partial sum of the blocks
+        if (threadIdx.x == 0){
+            atomicAdd(sum, partialS);
+            atomicAdd(sum + 1, partialV);
+        }
+    };
+
 
 } // namespace nmch::methods::kernels
 
@@ -191,6 +298,47 @@ namespace nmch::methods
     
 } // NMCH_FE_K1_MM
 
+namespace nmch::methods
+{
+    template <typename rnd_state>
+    NMCH_FE_K2_MM<rnd_state>::NMCH_FE_K2_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_FE_K1_MM<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
+    {};
+
+    template <typename rnd_state>
+    void
+    NMCH_FE_K2_MM<rnd_state>::compute()
+    {
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);			
+
+        kernels::FE_k2<<<this->NB, this->NTPB>>>(this->S_0, this->v_0,
+                this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
+                this->sum, this->state_numbers);
+        
+
+        cudaDeviceSynchronize(); // we have to synchronize the device since we remove the memcopy
+
+        cudaEventRecord(stop, 0);			// GPU timer instructions
+        cudaEventSynchronize(stop);			// GPU timer instructions
+        cudaEventElapsedTime(&(this->Tim_exec),			// GPU timer instructions
+            start, stop);					// GPU timer instructions
+        cudaEventDestroy(start);			// GPU timer instructions
+        cudaEventDestroy(stop);				// GPU timer instructions
+
+        //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
+
+        this->strike_price = this->sum[0];
+        this->variance = this->sum[1];
+    };
+
+    // definition of the base class to avoid compilation errors
+    template class NMCH_FE_K2_MM<curandStateXORWOW_t>;
+    template class NMCH_FE_K2_MM<curandStateMRG32k3a_t>;
+    template class NMCH_FE_K2_MM<curandStatePhilox4_32_10_t>;
+}
 
 namespace nmch::methods
 {
@@ -326,4 +474,4 @@ namespace nmch::methods
     template class NMCH_FE_K1_PiM<curandStateXORWOW_t>;
     template class NMCH_FE_K1_PiM<curandStateMRG32k3a_t>;
     template class NMCH_FE_K1_PiM<curandStatePhilox4_32_10_t>;
-}
+} //NMCH_FE_K1_PiM

@@ -13,7 +13,7 @@
 namespace nmch::methods::kernels{
     
     template <typename rnd_state>
-    __device__
+    __inline__ __device__
     float gamma_distribution(rnd_state* state, float alpha) 
     {
         float d, c, x, v, u;
@@ -139,6 +139,121 @@ namespace nmch::methods::kernels{
         }
     }
 
+    __inline__ __device__ float warpReduceSum(float val) {
+        for (int offset = 16; offset > 0; offset /= 2) {
+            // 0xFFFFFFFF each warp contribute
+            // val is the register to be shifted
+            // offset is the distance to shift
+            val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+        }
+        return val;
+    }
+
+    // Perform block-level reduction of the warp reduced values
+    __inline__ __device__ float blockReduceSum(float val) {
+        /*if the compute capability is lower than 7.0, we are allocating more shared memory than required 
+        because the maximum number of threads per block is 512 instead of 1024*/
+        static __shared__ float shared[32]; // Shared memory for one value per warp
+        int lane = threadIdx.x % 32;        // Lane index within the warp
+        int warpId = threadIdx.x / 32;      // Warp index within the block
+
+        // Perform warp-level reduction
+        val = warpReduceSum(val); // WE ARE ASSUMING A NUMBER OF THREADS PER BLOCK WHICH IS A MULTIPLE OF THE WARP(not a strong assumption)
+
+        // Write the reduced value of each warp to shared memory (only the first thread of each warp)
+        if (lane == 0) shared[warpId] = val; 
+
+        __syncthreads();
+
+        // Let the first warp reduce all warp results
+        /*
+            At this point some shared memory may be not used
+            This may be caused from 2 reasons:
+            - we are using a compute capability lower than 7.0
+            - the number of threads per block are not the maximum possible
+            In this case we will not use all the first warp but just
+            the first blockDim.x/32 threads
+        */
+        val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : 0; 
+        if (warpId == 0) val = warpReduceSum(val); // no divergence here
+
+        return val;
+    }
+
+        template <typename rnd_state>
+    __global__ 
+    void EM_k2(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
+                            float K, int N, rnd_state* state, float* sum, int n)
+    {
+        int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+        // get the local state
+        rnd_state localState = state[tid];
+
+        int i;
+        int N_p; // poisson 
+        float lambda, gamma, Vt_next, m, sigma2;
+
+        // initialization of the variance and the price
+        float St = S_0;
+        float Vt = v_0;
+        float vI = 0.0f; // accumulated variance using the trapezoidal rule
+        // initializing constansts
+        /* WE CAN TRY __expf(-k * dt) instead of expf(-k * dt) 
+        is more efficient because it uses the hardware exp instruction 
+        but it is less precise*/
+
+        const float exp_kdt = expf(-k * dt); //expf is very expensive to compute
+        const float d = 2.0f * k * theta / (sigma * sigma);
+        // this part of lambda is constant, no need to compute it at each iteration
+        const float lambda_const = (2 * k * exp_kdt) / (sigma * sigma * (1 - exp_kdt)); 
+
+        /*##############################################
+         *                  SIMULATION
+         *##############################################*/
+        for (i = 0; i < N; ++i) { // advancing in time
+            // step 1
+            lambda = lambda_const * Vt; 
+            N_p = curand_poisson(&localState, lambda);
+            gamma = gamma_distribution(&localState, d + N_p);
+            // a lot of divergence here since the gamma distribution is not equally distributed among threads
+            Vt_next = (sigma * sigma * (1.0f - exp_kdt) / (2.0f * k)) * gamma;
+
+            // step 2
+            vI += (Vt + Vt_next);//*dt; // dt missing????
+
+            // advance the variance
+            Vt = Vt_next;
+        }
+        vI *= dt*0.5; // only done once for numerical stability
+        //Vt = v1;
+        //step 3 -  Assuming T = 1
+        m       = (1.0f / sigma) * (Vt - v_0 - k * theta + k * vI);
+        // step 4 
+        m       = -0.5f * vI + rho * m;
+        // assume S_0 = 1
+        sigma2  = (1.0f - rho * rho) * vI;
+        //St
+        // what happens if we use the hardware exp instruction?
+        // what happens if we change curand_normal to curand_normal2?
+        St      = expf(m + sqrtf(sigma2) * curand_normal(&localState));
+
+        /*##############################################
+         *                  REDUCTION
+         *##############################################*/
+
+        // Perform block-level reduction
+        float partialS, partialV;
+        partialS = blockReduceSum(fmaxf(0.0f, St - K)/n);
+        partialV = blockReduceSum(Vt/n);
+
+        // Use atomicAdd to accumulate the partial sum of the blocks
+        if (threadIdx.x == 0){
+            atomicAdd(sum, partialS);
+            atomicAdd(sum + 1, partialV);
+        }
+    }
+
 
 } // namespace nmch::methods::kernels
 
@@ -258,6 +373,50 @@ namespace nmch::methods
     template class NMCH_EM_K1_MM<curandStatePhilox4_32_10_t>;
     
 } // NMCH_EM_K1_MM
+
+namespace nmch::methods
+{
+
+    template <typename rnd_state>
+    NMCH_EM_K2_MM<rnd_state>::NMCH_EM_K2_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_EM_K1_MM<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
+    {};
+
+
+    template <typename rnd_state>
+    void
+    NMCH_EM_K2_MM<rnd_state>::compute()
+    {
+        cudaEvent_t start, stop;			// GPU timer instructions
+        cudaEventCreate(&start);			// GPU timer instructions
+        cudaEventCreate(&stop);				// GPU timer instructions
+        cudaEventRecord(start, 0);			// GPU timer instructions
+
+        kernels::EM_k2<<<this->NB, this->NTPB, 2 * this->NTPB * sizeof(float)>>>(this->S_0, this->v_0,
+                this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
+                this->sum, this->state_numbers);
+
+        cudaDeviceSynchronize(); // we have to synchronize the device since we remove the memcopy
+
+        cudaEventRecord(stop, 0);			// GPU timer instructions
+        cudaEventSynchronize(stop);			// GPU timer instructions
+        cudaEventElapsedTime(&(this->Tim_exec),			// GPU timer instructions
+            start, stop);					// GPU timer instructions
+        cudaEventDestroy(start);			// GPU timer instructions
+        cudaEventDestroy(stop);				// GPU timer instructions
+
+        //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
+
+        this->strike_price = this->sum[0];
+        this->variance = this->sum[1];
+    };
+
+    // definition of the base class to avoid compilation errors
+    template class NMCH_EM_K2_MM<curandStateXORWOW_t>;
+    template class NMCH_EM_K2_MM<curandStateMRG32k3a_t>;
+    template class NMCH_EM_K2_MM<curandStatePhilox4_32_10_t>;
+    
+} // NMCH_EM_K2_MM
 
 /* 
 namespace nmch::methods
