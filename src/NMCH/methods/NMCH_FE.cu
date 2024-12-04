@@ -79,7 +79,8 @@ namespace nmch::methods::kernels{
        requires at least 2 steps (a shared load instruction and a shared store instruction, and probably also a 
        synchronization step), the same communication via warp shuffle requires a single operation/instruction.
      */
-    __inline__ __device__ float warpReduceSum(float val) {
+    __inline__ __device__ float warpReduceSum(float val) 
+    {
         for (int offset = 16; offset > 0; offset /= 2) {
             // 0xFFFFFFFF each warp contribute
             // val is the register to be shifted
@@ -90,7 +91,8 @@ namespace nmch::methods::kernels{
     }
 
     // Perform block-level reduction of the warp reduced values
-    __inline__ __device__ float blockReduceSum(float val) {
+    __inline__ __device__ float blockReduceSum(float val) 
+    {
         /*if the compute capability is lower than 7.0, we are allocating more shared memory than required 
         because the maximum number of threads per block is 512 instead of 1024*/
         static __shared__ float shared[32]; // Shared memory for one value per warp
@@ -179,6 +181,68 @@ namespace nmch::methods::kernels{
         }
     };
 
+    /**
+     * This kernel only works with the curandStatePhilox4_32_10_t random state
+     * we call the curand_normal4 function to generate 4 normally distributed numbers
+     */
+    __global__ void FE_k2_philox(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
+                            float K, int N, curandStatePhilox4_32_10_t* state, float* sum, int n)
+    {
+
+        int idx = blockDim.x * blockIdx.x + threadIdx.x;
+        //extern __shared__ float A[]; // dynamically allocated in the kernel call
+        // pointers to the shared memory
+        //float *SR, *VR; 
+        //SR = A; // stock price reduction 
+        //VR = SR + blockDim.x; // variance reduction
+
+        // initialize the random state
+        curandStatePhilox4_32_10_t localState = state[idx]; 
+
+        float4 G;
+        float St = S_0;
+        float Vt = v_0;
+        int i;
+        const float sqrt_dt = sqrtf(dt);
+        const float sqrt_rho = sqrtf(1-rho*rho);
+
+        /*  ###################################
+                    FORWARD EULER
+            ################################### */
+        
+        for(i = 0; i<N; i+=2)
+        {
+            G = curand_normal4(&localState); // returns two normally distributed numbers
+
+            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
+            Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
+            Vt = abs(Vt);
+
+            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.z+sqrt_rho*G.w); // maybe sqrtf(Vt) also??
+            Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.z;
+            Vt = abs(Vt);
+        }
+        // St = S1, Vt = V1
+
+        //SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
+        //VR[threadIdx.x] = Vt/n;
+
+        /*  ###################################
+                    REDUCTION
+        ################################### */
+
+        // Perform block-level reduction
+        float partialS, partialV;
+        partialS = blockReduceSum(fmaxf(0.0f, St - K)/n);
+        partialV = blockReduceSum(Vt/n);
+
+        // Use atomicAdd to accumulate the partial sum of the blocks
+        if (threadIdx.x == 0){
+            atomicAdd(sum, partialS);
+            atomicAdd(sum + 1, partialV);
+        }
+    };
+
 
 } // namespace nmch::methods::kernels
 
@@ -233,7 +297,6 @@ namespace nmch::methods
     
 } // NMCH_FE_K1
 
-
 namespace nmch::methods
 {
 
@@ -253,7 +316,7 @@ namespace nmch::methods
         // one accumulator for the price and one for the variance
         cudaMallocManaged(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
-        cudaMallocManaged(&(this->states), this->state_numbers * sizeof(rnd_state));
+        cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
         this->init_curand_state(seed);
         
         cudaEventRecord(stop, 0);			
@@ -338,7 +401,44 @@ namespace nmch::methods
     template class NMCH_FE_K2_MM<curandStateXORWOW_t>;
     template class NMCH_FE_K2_MM<curandStateMRG32k3a_t>;
     template class NMCH_FE_K2_MM<curandStatePhilox4_32_10_t>;
-}
+} // NMCH_FE_K2_MM
+
+namespace nmch::methods
+{
+    NMCH_FE_K2_PHILOX_MM::NMCH_FE_K2_PHILOX_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_FE_K1_MM<curandStatePhilox4_32_10_t>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
+    {};
+
+    void
+    NMCH_FE_K2_PHILOX_MM::compute()
+    {
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);			
+
+        kernels::FE_k2_philox<<<this->NB, this->NTPB>>>(this->S_0, this->v_0,
+                this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
+                this->sum, this->state_numbers);
+        
+
+        cudaDeviceSynchronize(); // we have to synchronize the device since we remove the memcopy
+
+        cudaEventRecord(stop, 0);			// GPU timer instructions
+        cudaEventSynchronize(stop);			// GPU timer instructions
+        cudaEventElapsedTime(&(this->Tim_exec),			// GPU timer instructions
+            start, stop);					// GPU timer instructions
+        cudaEventDestroy(start);			// GPU timer instructions
+        cudaEventDestroy(stop);				// GPU timer instructions
+
+        //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
+
+        this->strike_price = this->sum[0];
+        this->variance = this->sum[1];
+    };
+
+} // NMCH_FE_K2_PHILOX_MM
+
 
 namespace nmch::methods
 {

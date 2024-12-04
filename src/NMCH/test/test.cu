@@ -2,6 +2,98 @@
 #include "NMCH/methods/NMCH_FE.hpp"
 #include "NMCH/methods/NMCH_EM.hpp"
 
+#include <curand_kernel.h>
+#include <cuda_runtime.h>
+
+__inline__ __device__ float warpReduceSum(float val) {
+	for (int offset = 16; offset > 0; offset /= 2) {
+		// 0xFFFFFFFF each warp contribute
+		// val is the register to be shifted
+		// offset is the distance to shift
+		val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+	}
+	return val;
+}
+
+// Perform block-level reduction of the warp reduced values
+__inline__ __device__ float blockReduceSum(float val) {
+	/*if the compute capability is lower than 7.0, we are allocating more shared memory than required 
+	because the maximum number of threads per block is 512 instead of 1024*/
+	static __shared__ float shared[32]; // Shared memory for one value per warp
+	int lane = threadIdx.x % 32;        // Lane index within the warp
+	int warpId = threadIdx.x / 32;      // Warp index within the block
+
+	// Perform warp-level reduction
+	val = warpReduceSum(val); // WE ARE ASSUMING A NUMBER OF THREADS PER BLOCK WHICH IS A MULTIPLE OF THE WARP(not a strong assumption)
+
+	// Write the reduced value of each warp to shared memory (only the first thread of each warp)
+	if (lane == 0) shared[warpId] = val; 
+
+	__syncthreads();
+
+	// Let the first warp reduce all warp results
+	/*
+		At this point some shared memory may be not used
+		This may be caused from 2 reasons:
+		- we are using a compute capability lower than 7.0
+		- the number of threads per block are not the maximum possible
+		In this case we will not use all the first warp but just
+		the first blockDim.x/32 threads
+	*/
+	val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : 0; 
+	if (warpId == 0) val = warpReduceSum(val); // no divergence here
+
+	return val;
+}
+
+__global__ void test_warp_reduction(float *sum, int n)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	// Perform block-level reduction
+	float partialS, partialV;
+	partialS = blockReduceSum(fmaxf(5.0f, idx)/n);
+	partialV = blockReduceSum(idx/n);
+
+	// Use atomicAdd to accumulate the partial sum of the blocks
+	if (threadIdx.x == 0){
+		atomicAdd(sum, partialS);
+		atomicAdd(sum + 1, partialV);
+	}
+}
+
+__global__ void test_normal_reduction(float *sum, int n)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+	extern __shared__ float A[]; // dynamically allocated in the kernel call
+	// pointers to the shared memory
+	float *SR, *VR; 
+	SR = A; // stock price reduction 
+	VR = SR + blockDim.x; // variance reduction
+	// Perform block-level reduction
+	SR[threadIdx.x] = fmaxf(5.f, idx)/n;
+	VR[threadIdx.x] = idx/n;
+
+	__syncthreads(); // wait for all threads to finish the computation
+
+	int i = blockDim.x/2;
+	while(i != 0)
+	{
+		if(threadIdx.x < i)
+		{
+			SR[threadIdx.x] += SR[threadIdx.x + i];
+			VR[threadIdx.x] += VR[threadIdx.x + i];
+		}
+		__syncthreads(); // wait for all threads to finish the computation
+		i /= 2;
+	}
+
+	if(threadIdx.x == 0)
+	{
+		atomicAdd(sum, SR[0]);
+		atomicAdd(sum +1, VR[0]);
+	}
+}
+
 /**
 - default parameters
 - N       = 10000
@@ -24,6 +116,18 @@ This is justified by the fact that the communication between CPU and GPU is not 
 moving only two floats.
  */
 
+/**
+ * reduction data with 1024*100.000 = 102.400.000 threads
+ * using normal reduction we have 4.533248 ms while using warp reduction 
+ * we have 2.750464 ms. 
+ * while using 1.024.000.000 threads we have 42.272766 ms and 24.312481 ms
+ * respectively. 
+ */
+
+/**
+ * using curand_normal4 in FE allows to have 72.066048 ms against the normal version always using 
+ * philox4_32_10 which has 85.052193 ms and the normal 53.237823 ms using xorwow.
+ */
 
 /**
 	presentation ideas: class hierarchy and speedup obtained with each strategy and why we chose a specific
@@ -33,6 +137,30 @@ using namespace nmch::methods;
 
 int main(int argc, char **argv)
 {
+	//allocate sum managed
+/* 	float *sum;
+	cudaMallocManaged(&sum, 2*sizeof(float));
+	sum[0] = 0.0f;
+	sum[1] = 0.0f;
+	int N = 10000;
+	int NTPB = 1024; 
+	int NB = 1000000;
+	// time
+	cudaEvent_t start, stop;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
+	test_warp_reduction<<<NB, NTPB>>>(sum, N);
+	//test_normal_reduction<<<NB, NTPB, 2*NTPB*sizeof(float)>>>(sum, N);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	float time;
+	cudaEventElapsedTime(&time, start, stop);
+	printf("Execution time %f ms\n", time);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop); */
+	
+
 	int NTPB = 1024;
 	int NB = 512;
 	float T = 1.0f;
@@ -97,7 +225,9 @@ int main(int argc, char **argv)
 	}
 
 	if (method == "fe") {
-		NMCH_FE_K2_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+		//NMCH_FE_K2_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+		//NMCH_FE_K2_MM<curandStatePhilox4_32_10_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+		NMCH_FE_K2_PHILOX_MM nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 		nmch.init(seed);
 		nmch.compute();
 		nmch.print_stats();

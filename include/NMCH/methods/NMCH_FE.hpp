@@ -71,6 +71,13 @@ namespace nmch::methods
             virtual ~NMCH_FE_K2_MM() = default;
     };
 
+    class NMCH_FE_K2_PHILOX_MM : public NMCH_FE_K1_MM<curandStatePhilox4_32_10_t> {
+    public:
+        NMCH_FE_K2_PHILOX_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+        virtual void compute() override;
+        virtual ~NMCH_FE_K2_PHILOX_MM() = default;
+    };
+
     template <typename rnd_state>
     class NMCH_FE_K1_PgM : public NMCH_FE_K1<rnd_state> {
         public:

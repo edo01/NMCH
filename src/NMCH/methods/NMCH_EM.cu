@@ -180,7 +180,7 @@ namespace nmch::methods::kernels{
         return val;
     }
 
-        template <typename rnd_state>
+    template <typename rnd_state>
     __global__ 
     void EM_k2(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
                             float K, int N, rnd_state* state, float* sum, int n)
@@ -253,7 +253,6 @@ namespace nmch::methods::kernels{
             atomicAdd(sum + 1, partialV);
         }
     }
-
 
 } // namespace nmch::methods::kernels
 
@@ -329,7 +328,7 @@ namespace nmch::methods
         // one accumulator for the price and one for the variance
         cudaMallocManaged(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
-        cudaMallocManaged(&(this->states), this->state_numbers * sizeof(rnd_state));
+        cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
         this->init_curand_state(seed);
 
         cudaEventRecord(stop, 0);			
