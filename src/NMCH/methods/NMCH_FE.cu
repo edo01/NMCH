@@ -243,6 +243,58 @@ namespace nmch::methods::kernels{
         }
     };
 
+    template <typename rnd_state>
+    __global__ void FE_k3(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
+                            float K, int N, rnd_state* state, float* sum, int n)
+    {
+
+        int idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+        __shared__ rnd_state shared_states[512];
+
+        // initialize the random state
+        shared_states[threadIdx.x] = state[idx]; 
+
+        float2 G;
+        float St = S_0;
+        float Vt = v_0;
+        int i;
+        const float sqrt_dt = sqrtf(dt);
+        const float sqrt_rho = sqrtf(1-rho*rho);
+
+        /*  ###################################
+                    FORWARD EULER
+            ################################### */
+        
+        for(i = 0; i<N; i++)
+        {
+            G = curand_normal2(&shared_states[threadIdx.x]); // returns two normally distributed numbers
+
+            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
+            Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
+            Vt = abs(Vt);
+        }
+        // St = S1, Vt = V1
+
+        //SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
+        //VR[threadIdx.x] = Vt/n;
+
+        /*  ###################################
+                    REDUCTION
+        ################################### */
+
+        // Perform block-level reduction
+        float partialS, partialV;
+        partialS = blockReduceSum(fmaxf(0.0f, St - K)/n);
+        partialV = blockReduceSum(Vt/n);
+
+        // Use atomicAdd to accumulate the partial sum of the blocks
+        if (threadIdx.x == 0){
+            atomicAdd(sum, partialS);
+            atomicAdd(sum + 1, partialV);
+        }
+    };
+
 
 } // namespace nmch::methods::kernels
 
@@ -438,6 +490,105 @@ namespace nmch::methods
     };
 
 } // NMCH_FE_K2_PHILOX_MM
+
+namespace nmch::methods
+{
+    template <typename rnd_state>
+    NMCH_FE_K3_MM<rnd_state>::NMCH_FE_K3_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_FE_K2_MM<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
+    {};
+
+    template <typename rnd_state>
+    void
+    NMCH_FE_K3_MM<rnd_state>::compute()
+    {
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);			
+
+        kernels::FE_k3<<<this->NB, this->NTPB>>>(this->S_0, this->v_0,
+                this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
+                this->sum, this->state_numbers);
+        
+
+        cudaDeviceSynchronize(); // we have to synchronize the device since we remove the memcopy
+
+        cudaEventRecord(stop, 0);			// GPU timer instructions
+        cudaEventSynchronize(stop);			// GPU timer instructions
+        cudaEventElapsedTime(&(this->Tim_exec),			// GPU timer instructions
+            start, stop);					// GPU timer instructions
+        cudaEventDestroy(start);			// GPU timer instructions
+        cudaEventDestroy(stop);				// GPU timer instructions
+
+        //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
+
+        this->strike_price = this->sum[0];
+        this->variance = this->sum[1];
+    };
+
+    // definition of the base class to avoid compilation errors
+    template class NMCH_FE_K3_MM<curandStateXORWOW_t>;
+    template class NMCH_FE_K3_MM<curandStateMRG32k3a_t>;
+    template class NMCH_FE_K3_MM<curandStatePhilox4_32_10_t>;
+} // NMCH_FE_K3_MM
+
+
+namespace nmch::methods
+{
+    template <typename rnd_state>
+    NMCH_FE_K3_MM<rnd_state>::NMCH_FE_K3_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
+    NMCH_FE_K2_MM<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
+    {};
+
+    template <typename rnd_state>
+    void
+    NMCH_FE_K3_MM<rnd_state>::compute()
+    {
+        cudaEvent_t start, stop;			
+        cudaEventCreate(&start);			
+        cudaEventCreate(&stop);				
+        cudaEventRecord(start, 0);			
+
+        kernels::FE_k3<<<this->NB, this->NTPB>>>(this->S_0, this->v_0,
+                this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
+                this->sum, this->state_numbers);
+        
+
+        cudaDeviceSynchronize(); // we have to synchronize the device since we remove the memcopy
+
+        cudaEventRecord(stop, 0);			// GPU timer instructions
+        cudaEventSynchronize(stop);			// GPU timer instructions
+        cudaEventElapsedTime(&(this->Tim_exec),			// GPU timer instructions
+            start, stop);					// GPU timer instructions
+        cudaEventDestroy(start);			// GPU timer instructions
+        cudaEventDestroy(stop);				// GPU timer instructions
+
+        //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
+
+        this->strike_price = this->sum[0];
+        this->variance = this->sum[1];
+    };
+
+    template <typename rnd_state>
+    void NMCH_FE_K1<rnd_state>::init_curand_state(unsigned long long seed)
+    {
+	    nmch::random::init_curand_state_k<<<this->NB, this->NTPB>>>(states, seed);
+    };
+
+    template <typename rnd_state>
+    void NMCH_FE_K1<rnd_state>::finalize()
+    {
+        cudaFree(sum);
+        cudaFree(states);
+    };
+
+    // definition of the base class to avoid compilation errors
+    template class NMCH_FE_K3_MM<curandStateXORWOW_t>;
+    template class NMCH_FE_K3_MM<curandStateMRG32k3a_t>;
+    template class NMCH_FE_K3_MM<curandStatePhilox4_32_10_t>;
+} // NMCH_FE_K4_MM
+
 
 
 namespace nmch::methods

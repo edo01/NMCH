@@ -14,7 +14,7 @@ namespace nmch::methods {
     {
         // In this base version we just print the paramaters and the result
         printf("Base parameters:\n");
-        printf("NTBP    = %d\n",   NTPB);
+        printf("NTPB    = %d\n",   NTPB);
         printf("NB      = %d\n",     NB);
         printf("T       = %f\n",     T);
         printf("S_0,K   = %f\n",     S_0);
