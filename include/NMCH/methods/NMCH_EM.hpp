@@ -34,7 +34,12 @@ namespace nmch::methods
             virtual void finalize() override;
             virtual void print_stats() override;
             virtual ~NMCH_EM_K1() = default;
-        
+
+            /**
+             * @return execution time
+             */
+            float get_exec_time() const { return Tim_exec; }
+            
         protected:
             /* array for performing the reduction */
             float *sum;

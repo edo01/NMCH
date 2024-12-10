@@ -144,6 +144,9 @@ namespace nmch::methods::kernels{
             atomicAdd(sum,      SR[0]);
             atomicAdd(sum + 1,  VR[0]);
         }
+
+        // during the exploaration we need to store the current state in the global memory
+        state[idx] = localState;
     }
 
     __inline__ __device__ float warpReduceSum(float val) {
@@ -260,6 +263,9 @@ namespace nmch::methods::kernels{
             atomicAdd(sum, partialS);
             atomicAdd(sum + 1, partialV);
         }
+
+        // during the exploaration we need to store the current state in the global memory
+        state[idx] = localState;
     }
     
     template <typename rnd_state>
@@ -342,6 +348,9 @@ namespace nmch::methods::kernels{
             atomicAdd(sum, partialS);
             atomicAdd(sum + 1, partialV);
         }
+
+        // during the exploaration we need to store the current state in the global memory
+        state[idx] = shared_states[threadIdx.x];
     }
 
 } // namespace nmch::methods::kernels

@@ -68,9 +68,8 @@ namespace nmch::methods::kernels{
             atomicAdd(sum +1, VR[0]);
         }
 
-        // if am doing only one montecarlo simulation
-        // I haeve to begin again the sequence
-        // state[idx] = localState;
+        // when exploring the parameters we need to store the current state in the global memory
+        state[idx] = localState;
     };
  
     /**
@@ -179,6 +178,10 @@ namespace nmch::methods::kernels{
             atomicAdd(sum, partialS);
             atomicAdd(sum + 1, partialV);
         }
+
+        // when exploring the parameters we need to store the current state in the global memory
+        state[idx] = localState;
+
     };
 
     /**
@@ -241,6 +244,9 @@ namespace nmch::methods::kernels{
             atomicAdd(sum, partialS);
             atomicAdd(sum + 1, partialV);
         }
+
+        // during the exploaration we need to store the current state in the global memory
+        state[idx] = localState;
     };
 
     template <typename rnd_state>
@@ -293,6 +299,9 @@ namespace nmch::methods::kernels{
             atomicAdd(sum, partialS);
             atomicAdd(sum + 1, partialV);
         }
+
+        // when exploring the parameters we need to store the current state in the global memory
+        state[idx] = shared_states[threadIdx.x];
     };
 
 
