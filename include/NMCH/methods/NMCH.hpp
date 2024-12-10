@@ -113,7 +113,7 @@ namespace nmch::methods
                 float real_price = this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
                                         this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
                                         this->sigma);
-                return abs((this->strike_price - real_price)/real_price);
+                return abs((this->strike_price - real_price));
             }
 
             void set_k(float k) { this->k = k; }

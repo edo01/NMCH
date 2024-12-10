@@ -146,7 +146,7 @@ namespace nmch::methods::kernels{
         }
 
         // during the exploaration we need to store the current state in the global memory
-        state[idx] = localState;
+        state[tid] = localState;
     }
 
     __inline__ __device__ float warpReduceSum(float val) {
@@ -265,7 +265,7 @@ namespace nmch::methods::kernels{
         }
 
         // during the exploaration we need to store the current state in the global memory
-        state[idx] = localState;
+        state[tid] = localState;
     }
     
     template <typename rnd_state>
@@ -350,7 +350,7 @@ namespace nmch::methods::kernels{
         }
 
         // during the exploaration we need to store the current state in the global memory
-        state[idx] = shared_states[threadIdx.x];
+        state[tid] = shared_states[threadIdx.x];
     }
 
 } // namespace nmch::methods::kernels
@@ -440,6 +440,9 @@ namespace nmch::methods
     void
     NMCH_EM_K1_MM<rnd_state>::compute()
     {
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
+
         cudaEvent_t start, stop;			// GPU timer instructions
         cudaEventCreate(&start);			// GPU timer instructions
         cudaEventCreate(&stop);				// GPU timer instructions
@@ -484,6 +487,9 @@ namespace nmch::methods
     void
     NMCH_EM_K2_MM<rnd_state>::compute()
     {
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
+
         cudaEvent_t start, stop;			// GPU timer instructions
         cudaEventCreate(&start);			// GPU timer instructions
         cudaEventCreate(&stop);				// GPU timer instructions
@@ -527,6 +533,9 @@ namespace nmch::methods
     void
     NMCH_EM_K3_MM<rnd_state>::compute()
     {
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
+
         cudaEvent_t start, stop;			// GPU timer instructions
         cudaEventCreate(&start);			// GPU timer instructions
         cudaEventCreate(&stop);				// GPU timer instructions

@@ -35,17 +35,27 @@ set(CMAKE_CUDA_ARCHITECTURES 61 62 70 72 75 80 86)
 
 
 # Source files
-set(SOURCES
+set(BASE_SOURCES
     ${src_dir}/NMCH/methods/NMCH.cu
     ${src_dir}/NMCH/methods/NMCH_FE.cu
     ${src_dir}/NMCH/methods/NMCH_EM.cu
     ${src_dir}/NMCH/random/random.cu
     ${src_dir}/NMCH/utils/utils.cu
-    ${src_dir}/NMCH/test/test.cu
 )
 
+set(SOURCES_EXPLOARATION
+    ${BASE_SOURCES}
+    ${src_dir}/NMCH/test/exploration.cu
+)
+
+set(SOURCES_NMCH
+    ${BASE_SOURCES}
+    ${src_dir}/NMCH/test/nmch.cu
+)
+
+
 # Add executable
-add_executable(NMCH ${SOURCES})
+add_executable(NMCH ${SOURCES_NMCH})
 
 # Include directories
 include_directories(NMCH ${inc_dir})
@@ -55,3 +65,16 @@ target_link_libraries(NMCH ${CUDA_LIBRARIES})
 
 # Set C++ standard
 set_target_properties(NMCH PROPERTIES CXX_STANDARD 11)
+
+
+# Add executable
+add_executable(exploration ${SOURCES_EXPLOARATION})
+
+# Include directories
+include_directories(exploration ${inc_dir})
+
+# Link CUDA libraries
+target_link_libraries(exploration ${CUDA_LIBRARIES})
+
+# Set C++ standard
+set_target_properties(exploration PROPERTIES CXX_STANDARD 11)

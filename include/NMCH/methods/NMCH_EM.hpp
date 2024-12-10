@@ -38,7 +38,7 @@ namespace nmch::methods
             /**
              * @return execution time
              */
-            float get_exec_time() const { return Tim_exec; }
+            float get_execution_time() const { return Tim_exec; }
             
         protected:
             /* array for performing the reduction */

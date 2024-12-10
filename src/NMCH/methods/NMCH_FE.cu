@@ -10,7 +10,7 @@ namespace nmch::methods::kernels{
                             float K, int N, rnd_state* state, float* sum, int n)
     {
 
-        int idx = blockDim.x * blockIdx.x + threadIdx.x;
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
         extern __shared__ float A[]; // dynamically allocated in the kernel call
         // pointers to the shared memory
         float *SR, *VR; 
@@ -18,7 +18,7 @@ namespace nmch::methods::kernels{
         VR = SR + blockDim.x; // variance reduction
 
         // initialize the random state
-        rnd_state localState = state[idx]; 
+        rnd_state localState = state[tid]; 
 
         float2 G;
         float St = S_0;
@@ -69,7 +69,7 @@ namespace nmch::methods::kernels{
         }
 
         // when exploring the parameters we need to store the current state in the global memory
-        state[idx] = localState;
+        state[tid] = localState;
     };
  
     /**
@@ -130,7 +130,7 @@ namespace nmch::methods::kernels{
                             float K, int N, rnd_state* state, float* sum, int n)
     {
 
-        int idx = blockDim.x * blockIdx.x + threadIdx.x;
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
         //extern __shared__ float A[]; // dynamically allocated in the kernel call
         // pointers to the shared memory
         //float *SR, *VR; 
@@ -138,7 +138,7 @@ namespace nmch::methods::kernels{
         //VR = SR + blockDim.x; // variance reduction
 
         // initialize the random state
-        rnd_state localState = state[idx]; 
+        rnd_state localState = state[tid]; 
 
         float2 G;
         float St = S_0;
@@ -180,7 +180,7 @@ namespace nmch::methods::kernels{
         }
 
         // when exploring the parameters we need to store the current state in the global memory
-        state[idx] = localState;
+        state[tid] = localState;
 
     };
 
@@ -192,7 +192,7 @@ namespace nmch::methods::kernels{
                             float K, int N, curandStatePhilox4_32_10_t* state, float* sum, int n)
     {
 
-        int idx = blockDim.x * blockIdx.x + threadIdx.x;
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
         //extern __shared__ float A[]; // dynamically allocated in the kernel call
         // pointers to the shared memory
         //float *SR, *VR; 
@@ -200,7 +200,7 @@ namespace nmch::methods::kernels{
         //VR = SR + blockDim.x; // variance reduction
 
         // initialize the random state
-        curandStatePhilox4_32_10_t localState = state[idx]; 
+        curandStatePhilox4_32_10_t localState = state[tid]; 
 
         float4 G;
         float St = S_0;
@@ -246,7 +246,7 @@ namespace nmch::methods::kernels{
         }
 
         // during the exploaration we need to store the current state in the global memory
-        state[idx] = localState;
+        state[tid] = localState;
     };
 
     template <typename rnd_state>
@@ -254,12 +254,12 @@ namespace nmch::methods::kernels{
                             float K, int N, rnd_state* state, float* sum, int n)
     {
 
-        int idx = blockDim.x * blockIdx.x + threadIdx.x;
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
 
         __shared__ rnd_state shared_states[512];
 
         // initialize the random state
-        shared_states[threadIdx.x] = state[idx]; 
+        shared_states[threadIdx.x] = state[tid]; 
 
         float2 G;
         float St = S_0;
@@ -301,7 +301,7 @@ namespace nmch::methods::kernels{
         }
 
         // when exploring the parameters we need to store the current state in the global memory
-        state[idx] = shared_states[threadIdx.x];
+        state[tid] = shared_states[threadIdx.x];
     };
 
 
@@ -391,6 +391,9 @@ namespace nmch::methods
     void
     NMCH_FE_K1_MM<rnd_state>::compute()
     {
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
+
         cudaEvent_t start, stop;			
         cudaEventCreate(&start);			
         cudaEventCreate(&stop);				
@@ -433,6 +436,9 @@ namespace nmch::methods
     void
     NMCH_FE_K2_MM<rnd_state>::compute()
     {
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
+
         cudaEvent_t start, stop;			
         cudaEventCreate(&start);			
         cudaEventCreate(&stop);				
@@ -473,6 +479,9 @@ namespace nmch::methods
     void
     NMCH_FE_K2_PHILOX_MM::compute()
     {
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
+
         cudaEvent_t start, stop;			
         cudaEventCreate(&start);			
         cudaEventCreate(&stop);				
@@ -511,6 +520,9 @@ namespace nmch::methods
     void
     NMCH_FE_K3_MM<rnd_state>::compute()
     {
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
+
         cudaEvent_t start, stop;			
         cudaEventCreate(&start);			
         cudaEventCreate(&stop);				
@@ -541,64 +553,6 @@ namespace nmch::methods
     template class NMCH_FE_K3_MM<curandStateMRG32k3a_t>;
     template class NMCH_FE_K3_MM<curandStatePhilox4_32_10_t>;
 } // NMCH_FE_K3_MM
-
-
-namespace nmch::methods
-{
-    template <typename rnd_state>
-    NMCH_FE_K3_MM<rnd_state>::NMCH_FE_K3_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N):
-    NMCH_FE_K2_MM<rnd_state>(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N)
-    {};
-
-    template <typename rnd_state>
-    void
-    NMCH_FE_K3_MM<rnd_state>::compute()
-    {
-        cudaEvent_t start, stop;			
-        cudaEventCreate(&start);			
-        cudaEventCreate(&stop);				
-        cudaEventRecord(start, 0);			
-
-        kernels::FE_k3<<<this->NB, this->NTPB>>>(this->S_0, this->v_0,
-                this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
-                this->sum, this->state_numbers);
-        
-
-        cudaDeviceSynchronize(); // we have to synchronize the device since we remove the memcopy
-
-        cudaEventRecord(stop, 0);			// GPU timer instructions
-        cudaEventSynchronize(stop);			// GPU timer instructions
-        cudaEventElapsedTime(&(this->Tim_exec),			// GPU timer instructions
-            start, stop);					// GPU timer instructions
-        cudaEventDestroy(start);			// GPU timer instructions
-        cudaEventDestroy(stop);				// GPU timer instructions
-
-        //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
-
-        this->strike_price = this->sum[0];
-        this->variance = this->sum[1];
-    };
-
-    template <typename rnd_state>
-    void NMCH_FE_K1<rnd_state>::init_curand_state(unsigned long long seed)
-    {
-	    nmch::random::init_curand_state_k<<<this->NB, this->NTPB>>>(states, seed);
-    };
-
-    template <typename rnd_state>
-    void NMCH_FE_K1<rnd_state>::finalize()
-    {
-        cudaFree(sum);
-        cudaFree(states);
-    };
-
-    // definition of the base class to avoid compilation errors
-    template class NMCH_FE_K3_MM<curandStateXORWOW_t>;
-    template class NMCH_FE_K3_MM<curandStateMRG32k3a_t>;
-    template class NMCH_FE_K3_MM<curandStatePhilox4_32_10_t>;
-} // NMCH_FE_K4_MM
-
-
 
 namespace nmch::methods
 {
@@ -633,6 +587,9 @@ namespace nmch::methods
     NMCH_FE_K1_PgM<rnd_state>::compute()
     {   
         float result[2];
+
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			
         cudaEventCreate(&start);			
@@ -708,6 +665,9 @@ namespace nmch::methods
     void
     NMCH_FE_K1_PiM<rnd_state>::compute()
     {   
+        // memset sum to 0
+        cudaMemset(this->sum, 0, 2 * sizeof(float));
+
         cudaEvent_t start, stop;			
         cudaEventCreate(&start);			
         cudaEventCreate(&stop);				
