@@ -34,7 +34,12 @@ namespace nmch::methods
             virtual void finalize() override;
             virtual void print_stats() override;
             virtual ~NMCH_EM_K1() = default;
-        
+
+            /**
+             * @return execution time
+             */
+            float get_execution_time() const { return Tim_exec; }
+            
         protected:
             /* array for performing the reduction */
             float *sum;
@@ -62,27 +67,22 @@ namespace nmch::methods
             virtual ~NMCH_EM_K1_MM() = default;
     };
 
-   /*  template <typename rnd_state>
-    class NMCH_FE_K2_PgM : public NMCH_FE_K2<rnd_state> {
+    template <typename rnd_state>
+    class NMCH_EM_K2_MM : public NMCH_EM_K1_MM<rnd_state> {
         public:
-            NMCH_FE_K2_PgM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            NMCH_EM_K2_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
             virtual void compute() override;
-            virtual void init(unsigned long long seed) override;
-            virtual ~NMCH_FE_K2_PgM() = default;
+            virtual ~NMCH_EM_K2_MM() = default;
+    };
+
+    template <typename rnd_state>
+    class NMCH_EM_K3_MM : public NMCH_EM_K2_MM<rnd_state> {
+        public:
+            NMCH_EM_K3_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            virtual void compute() override;
+            virtual ~NMCH_EM_K3_MM() = default;
     };
     
-    template <typename rnd_state>
-    class NMCH_FE_K2_PiM : public NMCH_FE_K2<rnd_state> {
-        public:
-            NMCH_FE_K2_PiM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
-            virtual void compute() override;
-            virtual void init(unsigned long long seed) override;
-            virtual void finalize() override;
-            virtual ~NMCH_FE_K2_PiM() = default;
-        private:
-            float *result;
-    }; */
-
 } // nmch::methods
 
 #endif // "NMCH_FW_EULER_HPP"

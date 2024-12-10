@@ -1,8 +1,9 @@
 #ifndef NMCH_FW_EULER_HPP
 #define NMCH_FW_EULER_HPP
 
-#include "NMCH/methods/NMCH.hpp"
 #include <curand_kernel.h>
+#include "NMCH/methods/NMCH.hpp"
+#include "NMCH/utils/utils.hpp"
 
 // shoudn't be exposed
 namespace nmch::methods::cudakernels
@@ -34,6 +35,11 @@ namespace nmch::methods
             virtual void finalize() override;
             virtual void print_stats() override;
             virtual ~NMCH_FE_K1() = default;
+
+            /**
+             * @return execution time
+             */
+            float get_execution_time() const { return Tim_exec; }
         
         protected:
             /* array for performing the reduction */
@@ -60,6 +66,33 @@ namespace nmch::methods
             virtual void compute() override;
             virtual void init(unsigned long long seed) override;
             virtual ~NMCH_FE_K1_MM() = default;
+    };
+
+    template <typename rnd_state>
+    class NMCH_FE_K2_MM : public NMCH_FE_K1_MM<rnd_state> {
+        public:
+            NMCH_FE_K2_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            virtual void compute() override;
+            virtual ~NMCH_FE_K2_MM() = default;
+    };
+
+    /**
+     from the documentation:
+     The Philox_4x32_10 algorithm is closely tied to the thread and block count. Each thread computes 4 random numbers in the same time thus the most efficient use of Philox_4x32_10 is to generate a multiple of 4 times number of threads. 
+     */
+    class NMCH_FE_K2_PHILOX_MM : public NMCH_FE_K1_MM<curandStatePhilox4_32_10_t> {
+    public:
+        NMCH_FE_K2_PHILOX_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+        virtual void compute() override;
+        virtual ~NMCH_FE_K2_PHILOX_MM() = default;
+    };
+
+    template <typename rnd_state>
+    class NMCH_FE_K3_MM : public NMCH_FE_K2_MM<rnd_state> {
+        public:
+            NMCH_FE_K3_MM(int NTPB, int NB, float T, float S_0, float v_0, float r, float k, float rho, float theta, float sigma, int N);
+            virtual void compute() override;
+            virtual ~NMCH_FE_K3_MM() = default;
     };
 
     template <typename rnd_state>

@@ -105,6 +105,22 @@ namespace nmch::methods
             */
             float get_variance() const { return variance; }
 
+            /**
+             * @return the bias
+             */
+            float get_bias() const 
+            { 
+                float real_price = this->S_0 * nmch::utils::NP((this->r + 0.5 * this->sigma * this->sigma)/this->sigma) -
+                                        this->K * expf(-this->r) * nmch::utils::NP((this->r - 0.5 * this->sigma * this->sigma) /
+                                        this->sigma);
+                return abs((this->strike_price - real_price));
+            }
+
+            void set_k(float k) { this->k = k; }
+
+            void set_theta(float theta) { this->theta = theta; }    
+
+            void set_sigma(float sigma) { this->sigma = sigma; }
 
             virtual ~NMCH() = default;
 
