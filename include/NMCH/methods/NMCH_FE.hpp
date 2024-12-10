@@ -40,6 +40,14 @@ namespace nmch::methods
              * @return execution time
              */
             float get_execution_time() const { return Tim_exec; }
+
+
+            float get_err_estimate() const
+            {
+                float err = 1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
+                            (this->strike_price * this->strike_price)))/sqrt((double)this->state_numbers);
+                return err;
+            }
         
         protected:
             /* array for performing the reduction */

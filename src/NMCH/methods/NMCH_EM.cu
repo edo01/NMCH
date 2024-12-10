@@ -96,8 +96,8 @@ namespace nmch::methods::kernels{
             // step 1
             lambda = lambda_const * Vt; 
             N_p = curand_poisson(&localState, lambda);
+            // here  a lot of divergence here since the gamma distribution is not equally distributed among threads
             gamma = gamma_distribution(&localState, d + N_p);
-            // a lot of divergence here since the gamma distribution is not equally distributed among threads
             Vt_next = (sigma * sigma * (1.0f - exp_kdt) / (2.0f * k)) * gamma;
 
             // step 2

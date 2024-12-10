@@ -12,7 +12,7 @@ int main(int argc, char **argv)
 
 	int NTPB = 512; // using shared memory
 	// number of simulation paths to get from the command line
-	int NB = 20;
+	int NB = 40;
 	float T = 1.0f;
 	float S_0 = 1.0f;
 	float v_0 = 0.1f;
@@ -38,8 +38,8 @@ int main(int argc, char **argv)
 	float sigma_min = 0.1f, sigma_max = 1.0f;
 
 	float sigma_step = (sigma_max - sigma_min)/5;
-	float theta_step = (theta_max - theta_min)/5;
-	float k_step = (k_max - k_min)/5;
+	float theta_step = (theta_max - theta_min)/20;
+	float k_step = (k_max - k_min)/20;
 
 	NMCH_FE_K3_MM<curandStateXORWOW_t> nmch_fe(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 	NMCH_EM_K3_MM<curandStateXORWOW_t> nmch_em(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
@@ -47,7 +47,11 @@ int main(int argc, char **argv)
 	nmch_fe.init(seed);
 	nmch_em.init(seed);
 
-	printf("method, k, theta, sigma, execution_time, bias\n");
+	// the first run is always slow so we compute it here 
+	// an avoid to pollute the exploration
+	nmch_fe.compute();
+
+	printf("method, k, theta, sigma, execution_time, bias, err_estimate\n");
 	
 	for(sigma = sigma_min; sigma <= sigma_max; sigma += sigma_step) {
 		for(theta = theta_min; theta <= theta_max; theta += theta_step) {
@@ -63,10 +67,13 @@ int main(int argc, char **argv)
 
 				float execution_time = nmch_fe.get_execution_time();
 				float bias = nmch_fe.get_bias();
-				printf("fe, %f, %f, %f, %f, %f\n", k, theta, sigma, execution_time, bias);
+				float err = nmch_fe.get_err_estimate();
+				printf("fe, %f, %f, %f, %f, %f, %f\n", k, theta, sigma, execution_time, bias, err);
 			}
 		}
 	}
+
+	nmch_em.compute();
 		
 	for(sigma = sigma_min; sigma <= sigma_max; sigma += sigma_step) {
 		for(theta = theta_min; theta <= theta_max; theta += theta_step) {
@@ -82,7 +89,8 @@ int main(int argc, char **argv)
 
 				float execution_time = nmch_em.get_execution_time();
 				float bias = nmch_em.get_bias();
-				printf("em, %f, %f, %f, %f, %f\n", k, theta, sigma, execution_time, bias);
+				float err = nmch_em.get_err_estimate();
+				printf("em, %f, %f, %f, %f, %f, %f\n", k, theta, sigma, execution_time, bias, err);
 			}
 		}
 	}
