@@ -7,11 +7,21 @@
 
 using namespace nmch::methods;
 
+/**
+ * Here we explore the parameter space of the NMCH method.
+ * Different values of k, theta and sigma are tested to see how they affect the execution time
+ * and the error of the method.
+ *
+ * The state of the random number generator is saved after each run so that we avoid to initialize 
+ * it and to save time.
+ *
+ * The results are printed in a csv format so that they can be easily imported in python for further 
+ * analysis. 
+ */
 int main(int argc, char **argv)
 {
-
-	int NTPB = 512; // using shared memory
-	// number of simulation paths to get from the command line
+	// using shared memory so we need to set the number of threads per block <= 512
+	int NTPB = 512;
 	int NB = 40;
 	float T = 1.0f;
 	float S_0 = 1.0f;
@@ -47,11 +57,16 @@ int main(int argc, char **argv)
 	nmch_fe.init(seed);
 	nmch_em.init(seed);
 
+	/** #############################################################
+		 					FE EXPLORATION
+		############################################################# 
+	 */
+
 	// the first run is always slow so we compute it here 
 	// an avoid to pollute the exploration
 	nmch_fe.compute();
 
-	printf("method, k, theta, sigma, execution_time, bias, err_estimate\n");
+	printf("method, k, theta, sigma, execution_time, err\n");
 	
 	for(sigma = sigma_min; sigma <= sigma_max; sigma += sigma_step) {
 		for(theta = theta_min; theta <= theta_max; theta += theta_step) {
@@ -66,13 +81,20 @@ int main(int argc, char **argv)
 				nmch_fe.compute();
 
 				float execution_time = nmch_fe.get_execution_time();
-				float bias = nmch_fe.get_bias();
-				float err = nmch_fe.get_err_estimate();
-				printf("fe, %f, %f, %f, %f, %f, %f\n", k, theta, sigma, execution_time, bias, err);
+				float err = nmch_fe.get_err();
+				printf("fe, %f, %f, %f, %f, %f\n", k, theta, sigma, execution_time, err);
 			}
 		}
 	}
 
+	/** #############################################################
+		 				Exact Method EXPLORATION
+		############################################################# 
+	 */
+
+
+	// the first run is always slow so we compute it here 
+	// an avoid to pollute the exploration
 	nmch_em.compute();
 		
 	for(sigma = sigma_min; sigma <= sigma_max; sigma += sigma_step) {
@@ -88,9 +110,8 @@ int main(int argc, char **argv)
 				nmch_em.compute();
 
 				float execution_time = nmch_em.get_execution_time();
-				float bias = nmch_em.get_bias();
-				float err = nmch_em.get_err_estimate();
-				printf("em, %f, %f, %f, %f, %f, %f\n", k, theta, sigma, execution_time, bias, err);
+				float err = nmch_em.get_err();
+				printf("em, %f, %f, %f, %f, %f\n", k, theta, sigma, execution_time, err);
 			}
 		}
 	}
