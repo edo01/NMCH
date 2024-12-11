@@ -38,3 +38,57 @@ v_{t+\Delta t} = g \left( v_t + \kappa (\theta - v_t) \Delta t + \sigma \sqrt{v_
 $$
 
 where $G_1$ and $G_2$ are independent standard normal random variables, and the function $g$ is either taken to be equal to $(\cdot)^+$ or to $|\cdot|$.
+
+## Compiling and Running
+To build the executable run the following commands:
+```bash
+$ mkdir build
+$ cd build
+$ cmake ..
+```
+two executables will be generated: `NMCH` and `exploration`. The first one is the main program that will run the Monte Carlo simulation for the Heston model, and the second one is a program that will run a series of simulation for exploring the parameter space of the problem.
+
+The `NMCH` program can be run with the following command from the `build` directory:
+```bash
+$ ./bin/NMCH --method em --N 1000 --NTPB 512 --NB 512
+```
+this command will run an exact simulation(em) with 512 threads per block and 512 blocks, discretizing the time in 1000 steps. The exact method used is based on the one proposed in "_Mark Broadie and Özgür Kaya. Exact simulation of stochastic volatilityand other affine jump diffusion processes. Operations research, 54(2):217–231, 2006._".
+
+## Add your test
+To use the methods implemented in this project, you can add a new file in the `src/NMCH/test` directory and modify the CMakeLists.txt file accordingly. Here a simple usage example:
+
+```c++
+#include "NMCH/methods/NMCH_FE.hpp"
+#include "NMCH/methods/NMCH_EM.hpp"
+
+#include <curand_kernel.h>
+#include <cuda_runtime.h>
+
+int main()
+{
+	int NTPB = 512;
+	int NB = 512;
+	float T = 1.0f;
+	float S_0 = 1.0f;
+	float v_0 = 0.1f;
+	float r = 0.0f;
+	float k = 0.5f;
+	float rho = -0.7;
+	float theta = 0.1f;
+	float sigma = 0.3f;
+	int N = 1000;
+	unsigned long long seed = 1234;
+
+    // step 1 declare the method
+    NMCH_FE_K3_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+
+    // step 2 initialize the simulation
+    nmch.init(seed);
+    // step 3 run the simulation
+    nmch.compute();
+    // step 4 print the results
+    nmch.print_stats();
+    // step 5 finalize the simulation
+    nmch.finalize();
+}
+```

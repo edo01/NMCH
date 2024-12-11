@@ -49,7 +49,7 @@ using namespace nmch::methods;
 int main(int argc, char **argv)
 {
 
-	int NTPB = 1024;
+	int NTPB = 512;
 	int NB = 512;
 	float T = 1.0f;
 	float S_0 = 1.0f;
