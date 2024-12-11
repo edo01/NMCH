@@ -11,6 +11,7 @@ namespace nmch::methods::kernels{
      * - It uses the Forward Euler method
      * - It reduces the results of the simulation on the device
      * - It saves the state of the random number generator   
+     * - It uses aggregated calls to the random number generator to reduce the overhead of the calls
      */
     template <typename rnd_state>
     __global__ void FE_k1(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
@@ -79,12 +80,7 @@ namespace nmch::methods::kernels{
         state[tid] = localState;
     };
  
-    /**
-     - reduces the shared memory pressure 
-     - Whereas to communicate a data item from a register in thread B to a register in thread A via shared memory
-       requires at least 2 steps (a shared load instruction and a shared store instruction, and probably also a 
-       synchronization step), the same communication via warp shuffle requires a single operation/instruction.
-     */
+    // Perform warp-level reduction
     __inline__ __device__ float warpReduceSum(float val) 
     {
         for (int offset = 16; offset > 0; offset /= 2) {
@@ -129,8 +125,11 @@ namespace nmch::methods::kernels{
     }
 
     /**
-     * This previous kernel was using 2 * number of threads per block floats of shared memory, while this one is using only
-     * 32 floats of shared memory.
+     * K1 uses 2 * number of threads per block floats of shared memory, while this new version is using only
+     * 32 floats of shared memory per block.
+     *
+     * K2 version of the kernel has the same features of the K1 version but it uses warp shuffle instructions for 
+     * the reduction.
      */
     template <typename rnd_state>
     __global__ void FE_k2(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
@@ -138,11 +137,6 @@ namespace nmch::methods::kernels{
     {
 
         int tid = blockDim.x * blockIdx.x + threadIdx.x;
-        //extern __shared__ float A[]; // dynamically allocated in the kernel call
-        // pointers to the shared memory
-        //float *SR, *VR; 
-        //SR = A; // stock price reduction 
-        //VR = SR + blockDim.x; // variance reduction
 
         // initialize the random state
         rnd_state localState = state[tid]; 
@@ -167,9 +161,6 @@ namespace nmch::methods::kernels{
             Vt = abs(Vt);
         }
         // St = S1, Vt = V1
-
-        //SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
-        //VR[threadIdx.x] = Vt/n;
 
         /*  ###################################
                     REDUCTION
@@ -200,11 +191,6 @@ namespace nmch::methods::kernels{
     {
 
         int tid = blockDim.x * blockIdx.x + threadIdx.x;
-        //extern __shared__ float A[]; // dynamically allocated in the kernel call
-        // pointers to the shared memory
-        //float *SR, *VR; 
-        //SR = A; // stock price reduction 
-        //VR = SR + blockDim.x; // variance reduction
 
         // initialize the random state
         curandStatePhilox4_32_10_t localState = state[tid]; 
@@ -222,7 +208,7 @@ namespace nmch::methods::kernels{
         
         for(i = 0; i<N; i+=2)
         {
-            G = curand_normal4(&localState); // returns two normally distributed numbers
+            G = curand_normal4(&localState); // returns four normally distributed numbers
 
             St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
             Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
@@ -233,9 +219,6 @@ namespace nmch::methods::kernels{
             Vt = abs(Vt);
         }
         // St = S1, Vt = V1
-
-        //SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
-        //VR[threadIdx.x] = Vt/n;
 
         /*  ###################################
                     REDUCTION
@@ -260,12 +243,17 @@ namespace nmch::methods::kernels{
     __global__ void FE_k3(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
                             float K, int N, rnd_state* state, float* sum, int n)
     {
-
+        // For GPUs with compute capability 8.6 maximum shared memory per thread block is 99 KB.
+        // In the worst case it is 64 Bytes per thread * 512 = 32 KB which 
+        /**
+         * We can't use more than 512 threads otherwise we don't have enough shared memory
+         *
+         */
         int tid = blockDim.x * blockIdx.x + threadIdx.x;
 
         __shared__ rnd_state shared_states[512];
 
-        // initialize the random state
+        // Save the states in the shared memory
         shared_states[threadIdx.x] = state[tid]; 
 
         float2 G;
@@ -288,9 +276,6 @@ namespace nmch::methods::kernels{
             Vt = abs(Vt);
         }
         // St = S1, Vt = V1
-
-        //SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
-        //VR[threadIdx.x] = Vt/n;
 
         /*  ###################################
                     REDUCTION
@@ -398,7 +383,7 @@ namespace nmch::methods
     void
     NMCH_FE_K1_MM<rnd_state>::compute()
     {
-        // memset sum to 0
+        // memset sum to 0 for multiple runs
         cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			
@@ -443,7 +428,7 @@ namespace nmch::methods
     void
     NMCH_FE_K2_MM<rnd_state>::compute()
     {
-        // memset sum to 0
+        // memset sum to 0 for multiple runs
         cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			
@@ -486,7 +471,7 @@ namespace nmch::methods
     void
     NMCH_FE_K2_PHILOX_MM::compute()
     {
-        // memset sum to 0
+        // memset sum to 0 for multiple runs
         cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			
@@ -498,8 +483,7 @@ namespace nmch::methods
                 this->r, this->k, this->rho, this->theta, this->sigma, this->dt, this->K, this->N, this->states,
                 this->sum, this->state_numbers);
         
-
-        cudaDeviceSynchronize(); // we have to synchronize the device since we remove the memcopy
+        cudaDeviceSynchronize(); // we have to synchronize the device since we removed the memcopy
 
         cudaEventRecord(stop, 0);			// GPU timer instructions
         cudaEventSynchronize(stop);			// GPU timer instructions
@@ -527,7 +511,7 @@ namespace nmch::methods
     void
     NMCH_FE_K3_MM<rnd_state>::compute()
     {
-        // memset sum to 0
+        // memset sum to 0 for multiple runs
         cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			
@@ -595,7 +579,7 @@ namespace nmch::methods
     {   
         float result[2];
 
-        // memset sum to 0
+        // memset sum to 0 for multiple runs
         cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			

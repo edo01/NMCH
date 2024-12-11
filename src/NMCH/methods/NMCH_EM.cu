@@ -6,6 +6,10 @@
 
 namespace nmch::methods::kernels{
     
+    /**
+     * This function implements a gamma distribution 
+     * based on "G. Marsaglia and T. Wai-Wan. A simple method for generating gamma variables".
+     */
     template <typename rnd_state>
     __inline__ __device__
     float gamma_distribution(rnd_state* state, float alpha) 
@@ -24,12 +28,20 @@ namespace nmch::methods::kernels{
 
         float C;
 
+        /**
+         * To handle the case alpha < 1, we need to compute C
+         * and increment alpha before the loop to avoid divergence 
+         * when introducing a branch in the while loop
+         */
         if (alpha < 1.0f) {
             C = powf(curand_uniform(state), 1.0f / alpha);  // U^(1/alpha) for alpha < 1
             alpha += 1.0f;  // Increment alpha
         } else {
             C = 1.0f;  // No scaling for alpha >= 1
         }
+
+        // PER DOPO: C sposta sopra il while 
+        // Vt ha una solutione precisa che il prof non ha dato
 
         // step 1
         d = alpha - 1.0f / 3.0f;
@@ -48,7 +60,12 @@ namespace nmch::methods::kernels{
         }
     }
 
-
+    /**
+     * K1 version of the kernel has the following features:
+     * - It uses the Exact Method
+     * - It reduces the results of the simulation on the device
+     * - It saves the state of the random number generator  
+     */
     template <typename rnd_state>
     __global__ 
     void EM_k1(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
@@ -142,6 +159,7 @@ namespace nmch::methods::kernels{
         state[tid] = localState;
     }
 
+    // Perform warp-level reduction
     __inline__ __device__ float warpReduceSum(float val) {
         for (int offset = 16; offset > 0; offset /= 2) {
             // 0xFFFFFFFF each warp contribute
@@ -183,6 +201,10 @@ namespace nmch::methods::kernels{
         return val;
     }
 
+    /**
+     * K1 uses 2 * number of threads per block floats of shared memory, while this new version is using only
+     * 32 floats of shared memory per block.
+     */
     template <typename rnd_state>
     __global__ 
     void EM_k2(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
@@ -433,7 +455,7 @@ namespace nmch::methods
     void
     NMCH_EM_K1_MM<rnd_state>::compute()
     {
-        // memset sum to 0
+        // memset sum to 0 for multiple runs
         cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			// GPU timer instructions
@@ -480,7 +502,7 @@ namespace nmch::methods
     void
     NMCH_EM_K2_MM<rnd_state>::compute()
     {
-        // memset sum to 0
+        // memset sum to 0 for multiple runs
         cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			// GPU timer instructions
@@ -526,7 +548,7 @@ namespace nmch::methods
     void
     NMCH_EM_K3_MM<rnd_state>::compute()
     {
-        // memset sum to 0
+        // memset sum to 0 for multiple runs
         cudaMemset(this->sum, 0, 2 * sizeof(float));
 
         cudaEvent_t start, stop;			// GPU timer instructions

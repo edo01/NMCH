@@ -42,7 +42,11 @@ namespace nmch::methods
              */
             float get_execution_time() const { return Tim_exec; }
 
-
+            /**
+             * @return the estimation of the error of the simulation
+             *         using the confidence interval: 
+                       \( 1.96 * sqrt((1/(N-1)) * (N*variance - strike_price^2))/sqrt(N) \)
+             */
             float get_err() const
             {
                 float err = 1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
