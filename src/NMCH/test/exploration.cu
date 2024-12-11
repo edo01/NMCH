@@ -22,13 +22,13 @@ int main(int argc, char **argv)
 {
 	// using shared memory so we need to set the number of threads per block <= 512
 	int NTPB = 512;
-	int NB = 40;
+	int NB = 10;
 	float T = 1.0f;
 	float S_0 = 1.0f;
 	float v_0 = 0.1f;
 	float r = 0.0f;
 	float rho = -0.7;
-	int N = 100;
+	int N = 1000;
 	unsigned long long seed = 1234;
 	
 	// default parameters
@@ -48,8 +48,8 @@ int main(int argc, char **argv)
 	float sigma_min = 0.1f, sigma_max = 1.0f;
 
 	float sigma_step = (sigma_max - sigma_min)/5;
-	float theta_step = (theta_max - theta_min)/20;
-	float k_step = (k_max - k_min)/20;
+	float theta_step = (theta_max - theta_min)/5;
+	float k_step = (k_max - k_min)/5;
 
 	NMCH_FE_K3_MM<curandStateXORWOW_t> nmch_fe(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 	NMCH_EM_K3_MM<curandStateXORWOW_t> nmch_em(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);

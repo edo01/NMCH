@@ -65,9 +65,9 @@ namespace nmch::methods
             float get_strike_price() const { return strike_price; }
 
             /**
-            * @return the variance at time T
+            * @return the value of E[X^2]
             */
-            float get_variance() const { return variance; }
+            float get_price_squared() const { return price_squared; }
 
             /**
              * Set methods for the exploration of the parameters
@@ -110,8 +110,8 @@ namespace nmch::methods
             float dt;
             /* final strike_price */
             float strike_price;
-            /* final variance*/
-            float variance;
+            /* final price_squared*/
+            float price_squared;
     };
 
 } // namespace nmch::methods

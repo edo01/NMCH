@@ -116,7 +116,7 @@ int main(int argc, char **argv)
 		//NMCH_FE_K1_MM<curandStateXORWOW_t> nmch1(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 		//NMCH_FE_K2_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 		//NMCH_FE_K2_PHILOX_MM nmch2P(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
-		NMCH_FE_K3_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+		NMCH_FE_K3_MM<curandStatePhilox4_32_10_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 
 		nmch.init(seed);
 		nmch.compute();
@@ -126,7 +126,8 @@ int main(int argc, char **argv)
 	} else if (method == "em") {
 		//NMCH_EM_K1_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 		//NMCH_EM_K2_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
-		NMCH_EM_K3_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
+
+		NMCH_EM_K3_MM<curandStatePhilox4_32_10_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 		nmch.init(seed);
 		nmch.compute();
 		nmch.print_stats();

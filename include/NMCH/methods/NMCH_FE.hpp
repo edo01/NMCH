@@ -49,7 +49,7 @@ namespace nmch::methods
              */
             float get_err() const
             {
-                float err = 1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
+                float err = 1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->price_squared - 
                             (this->strike_price * this->strike_price)))/sqrt((double)this->state_numbers);
                 return err;
             }

@@ -23,7 +23,7 @@ namespace nmch::methods::kernels{
         // pointers to the shared memory
         float *SR, *VR; 
         SR = A; // stock price reduction 
-        VR = SR + blockDim.x; // variance reduction
+        VR = SR + blockDim.x; // price_squared reduction
 
         // initialize the random state
         rnd_state localState = state[tid]; 
@@ -54,7 +54,8 @@ namespace nmch::methods::kernels{
             ###################################
          */
         SR[threadIdx.x] = fmaxf(0.0f, St - K)/n;
-        VR[threadIdx.x] = Vt/n;
+        //VR[threadIdx.x] = Vt/n;
+        VR[threadIdx.x] = SR[threadIdx.x]*SR[threadIdx.x]/n;
 
         __syncthreads(); // wait for all threads to finish the computation
 
@@ -167,14 +168,16 @@ namespace nmch::methods::kernels{
         ################################### */
 
         // Perform block-level reduction
-        float partialS, partialV;
-        partialS = blockReduceSum(fmaxf(0.0f, St - K)/n);
-        partialV = blockReduceSum(Vt/n);
+        float partialS, partialS2;
+        partialS = fmaxf(0.0f, St - K);
+        partialS2 = partialS*partialS;
+        partialS = blockReduceSum(partialS/n);
+        partialS2 = blockReduceSum(partialS2/n);
 
         // Use atomicAdd to accumulate the partial sum of the blocks
         if (threadIdx.x == 0){
             atomicAdd(sum, partialS);
-            atomicAdd(sum + 1, partialV);
+            atomicAdd(sum + 1, partialS2);
         }
 
         // when exploring the parameters we need to store the current state in the global memory
@@ -210,11 +213,11 @@ namespace nmch::methods::kernels{
         {
             G = curand_normal4(&localState); // returns four normally distributed numbers
 
-            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
+            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y);
             Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
             Vt = abs(Vt);
 
-            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.z+sqrt_rho*G.w); // maybe sqrtf(Vt) also??
+            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.z+sqrt_rho*G.w);
             Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.z;
             Vt = abs(Vt);
         }
@@ -225,14 +228,16 @@ namespace nmch::methods::kernels{
         ################################### */
 
         // Perform block-level reduction
-        float partialS, partialV;
-        partialS = blockReduceSum(fmaxf(0.0f, St - K)/n);
-        partialV = blockReduceSum(Vt/n);
+        float partialS, partialS2;
+        partialS = fmaxf(0.0f, St - K);
+        partialS2 = partialS*partialS;
+        partialS = blockReduceSum(partialS/n);
+        partialS2 = blockReduceSum(partialS2/n);
 
         // Use atomicAdd to accumulate the partial sum of the blocks
         if (threadIdx.x == 0){
             atomicAdd(sum, partialS);
-            atomicAdd(sum + 1, partialV);
+            atomicAdd(sum + 1, partialS2);
         }
 
         // during the exploaration we need to store the current state in the global memory
@@ -282,14 +287,16 @@ namespace nmch::methods::kernels{
         ################################### */
 
         // Perform block-level reduction
-        float partialS, partialV;
-        partialS = blockReduceSum(fmaxf(0.0f, St - K)/n);
-        partialV = blockReduceSum(Vt/n);
+        float partialS, partialS2;
+        partialS = fmaxf(0.0f, St - K);
+        partialS2 = partialS*partialS;
+        partialS = blockReduceSum(partialS/n);
+        partialS2 = blockReduceSum(partialS2/n);
 
         // Use atomicAdd to accumulate the partial sum of the blocks
         if (threadIdx.x == 0){
             atomicAdd(sum, partialS);
-            atomicAdd(sum + 1, partialV);
+            atomicAdd(sum + 1, partialS2);
         }
 
         // when exploring the parameters we need to store the current state in the global memory
@@ -332,12 +339,11 @@ namespace nmch::methods
         //call the print_stats of the base class
         NMCH<rnd_state>::print_stats();
         printf("METHOD: FORWARD-EULER\n");
-        printf("The estimated price is equal to %f\n", this->strike_price);
-        printf("The estimated variance is equal to %f\n", this->variance);
+        printf("The estimated price E[X] is equal to %f\n", this->strike_price);
+        printf("The estimated E[X^2] is equal to %f\n", this->price_squared);
         printf("The true price %f\n", real_price);
-        printf("Relative error committed= %f\n", abs((this->strike_price - real_price)/real_price));
         printf("error associated to a confidence interval of 95%% = %f\n",
-            1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
+            1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->price_squared - 
             (this->strike_price * this->strike_price)))/sqrt((double)this->state_numbers));
         printf("Execution time %f ms\n", Tim_exec);
         printf("Initialization time %f ms\n", Tim_init);
@@ -366,7 +372,7 @@ namespace nmch::methods
         cudaEventCreate(&stop);				
         cudaEventRecord(start, 0);			
         
-        // one accumulator for the price and one for the variance
+        // one accumulator for the price and one for the price_squared
         cudaMallocManaged(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
@@ -407,7 +413,7 @@ namespace nmch::methods
         //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = this->sum[0];
-        this->variance = this->sum[1];
+        this->price_squared = this->sum[1];
     };
 
     // definition of the base class to avoid compilation errors
@@ -453,7 +459,7 @@ namespace nmch::methods
         //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = this->sum[0];
-        this->variance = this->sum[1];
+        this->price_squared = this->sum[1];
     };
 
     // definition of the base class to avoid compilation errors
@@ -495,7 +501,7 @@ namespace nmch::methods
         //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = this->sum[0];
-        this->variance = this->sum[1];
+        this->price_squared = this->sum[1];
     };
 
 } // NMCH_FE_K2_PHILOX_MM
@@ -536,7 +542,7 @@ namespace nmch::methods
         //cudaMemcpy(&(this->result), this->sum, sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = this->sum[0];
-        this->variance = this->sum[1];
+        this->price_squared = this->sum[1];
     };
 
     // definition of the base class to avoid compilation errors
@@ -560,7 +566,7 @@ namespace nmch::methods
         cudaEventCreate(&stop);				
         cudaEventRecord(start, 0);	
 
-        // one accumulator for the price and one for the variance
+        // one accumulator for the price and one for the price_squared
         cudaMalloc(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
@@ -602,7 +608,7 @@ namespace nmch::methods
         cudaMemcpy(&result, this->sum, 2*sizeof(float), cudaMemcpyDeviceToHost);
 
         this->strike_price = result[0];
-        this->variance = result[1];
+        this->price_squared = result[1];
     };
 
     template class NMCH_FE_K1_PgM<curandStateXORWOW_t>;
@@ -631,7 +637,7 @@ namespace nmch::methods
         //cudaHostAlloc(&result, 2*sizeof(float), cudaHostAllocDefault);
         cudaMallocHost(&result, 2*sizeof(float));
 
-        // one accumulator for the price and one for the variance
+        // one accumulator for the price and one for the price_squared
         cudaMalloc(&(this->sum), 2 * sizeof(float));
         cudaMemset(this->sum, 0, 2 * sizeof(float));
         cudaMalloc(&(this->states), this->state_numbers * sizeof(rnd_state));
@@ -679,7 +685,7 @@ namespace nmch::methods
         testCUDA(cudaMemcpy(result, this->sum, 2*sizeof(float), cudaMemcpyDeviceToHost));
 
         this->strike_price = result[0];
-        this->variance = result[1];
+        this->price_squared = result[1];
     };
 
     template class NMCH_FE_K1_PiM<curandStateXORWOW_t>;
