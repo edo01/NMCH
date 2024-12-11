@@ -5,6 +5,13 @@
 
 namespace nmch::methods::kernels{
 
+
+    /**
+     * K1  features:
+     * - It uses the Forward Euler method
+     * - It reduces the results of the simulation on the device
+     * - It saves the state of the random number generator   
+     */
     template <typename rnd_state>
     __global__ void FE_k1(float S_0, float v_0, float r, float k, float rho, float theta, float sigma, float dt, 
                             float K, int N, rnd_state* state, float* sum, int n)
@@ -34,7 +41,7 @@ namespace nmch::methods::kernels{
         {
             G = curand_normal2(&localState); // returns two normally distributed numbers
 
-            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); // maybe sqrtf(Vt) also??
+            St = St + r * St * dt + sqrtf(Vt)*St*sqrt_dt*(rho*G.x+sqrt_rho*G.y); 
             Vt = Vt + k*(theta - Vt)*dt + sigma*sqrtf(Vt)*sqrt_dt*G.x;
             Vt = abs(Vt);
         }

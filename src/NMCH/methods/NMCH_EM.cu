@@ -1,10 +1,3 @@
-/**
- * Ideas for kernel optimization: 
- * - separate the simulation and the reduction and optimize the reduction as much as possible and then maybe merge the two kernels
- * - use the hardware exp instruction and the hardware sqrt instruction
- * - batch random number generation: USING LESS RANDOM NUMBER STATES??
- https://forums.developer.nvidia.com/t/question-about-optimal-curand-use/37752
- */
 #include "NMCH/methods/NMCH_EM.hpp"
 
 #define testCUDA(error) (nmch::utils::cuda::checkCUDA(error, __FILE__ , __LINE__))

@@ -122,6 +122,7 @@ int main(int argc, char **argv)
 		nmch.compute();
 		nmch.print_stats();
 		nmch.finalize();
+		
 	} else if (method == "em") {
 		//NMCH_EM_K1_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);
 		//NMCH_EM_K2_MM<curandStateXORWOW_t> nmch(NTPB, NB, T, S_0, v_0, r, k, rho, theta, sigma, N);

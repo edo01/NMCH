@@ -4,17 +4,18 @@
 #include "NMCH/methods/NMCH.hpp"
 #include <curand_kernel.h>
 
-// shoudn't be exposed
-namespace nmch::methods::cudakernels
-{
-    // we now need n, 
-    template <typename rnd_state>
-    __global__ void EM_k1(float S_0, float r, float sigma, float dt, float K,
-						int N, rnd_state* state, float* sum, int n);
-}  // nmch::methods::cudakernels
 
 namespace nmch::methods
 {
+    /**
+     * Abstract class for the Forward Euler method
+     *
+     * The nomeclature is the following:
+     * - NMCH: Namespace for the Monte Carlo methods
+     * - EM: Forward Euler
+     * - KX: Version of the kernel
+     * - YY: Type of Memory Management
+     */
     template <typename rnd_state>
     class NMCH_EM_K1 : public NMCH<rnd_state>
     {   
@@ -40,7 +41,7 @@ namespace nmch::methods
              */
             float get_execution_time() const { return Tim_exec; }
 
-            float get_err_estimate() const
+            float get_err() const
             {
                 float err = 1.96 * sqrt((double)(1.0f / (this->state_numbers - 1)) * (this->state_numbers*this->variance - 
                             (this->strike_price * this->strike_price)))/sqrt((double)this->state_numbers);
